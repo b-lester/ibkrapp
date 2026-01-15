@@ -184,6 +184,7 @@ header('Content-Type: text/html; charset=utf-8');
                         <th>Position</th>
                         <th>Last</th>
                         <th>Value</th>
+                        <th>Liability</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -193,10 +194,28 @@ header('Content-Type: text/html; charset=utf-8');
             const group = groups[ticker];
             let groupMktValue = 0;
             let groupPnL = 0;
+            let groupLiability = 0;
 
             group.forEach((pos, index) => {
                 groupMktValue += pos.mktValue;
                 groupPnL += pos.unrealizedPnl;
+
+                let liability = 0;
+                if (pos.assetClass === 'OPT' && pos.position < 0) {
+                    const desc = pos.contractDesc.split('[')[0].trim();
+                    const parts = desc.split(/\s+/);
+                    // Expected format: TICKER DATE STRIKE P/C
+                    if (parts.length >= 4) {
+                        const strike = parseFloat(parts[parts.length - 2]);
+                        const isPut = parts[parts.length - 1] === 'P';
+                        if (isPut && !isNaN(strike)) {
+                            // Liability = |position * strike|
+                            // Note: We multiply by 100 as each contract usually represents 100 shares
+                            liability = Math.abs(pos.position * strike * 100);
+                        }
+                    }
+                }
+                groupLiability += liability;
 
                 html += `
                     <tr>
@@ -208,6 +227,7 @@ header('Content-Type: text/html; charset=utf-8');
                         </td>
                         <td>${pos.mktPrice.toFixed(2)}</td>
                         <td>${formatCurrency(pos.mktValue)}</td>
+                        <td>${liability > 0 ? formatCurrency(liability) : '-'}</td>
                     </tr>
                 `;
             });
@@ -218,8 +238,9 @@ header('Content-Type: text/html; charset=utf-8');
 
             html += `
                 <tr class="summary-row">
-                    <td colspan="4" class="summary-cell">
+                    <td colspan="5" class="summary-cell">
                         <span class="pos-value">Total Value: ${formatCurrency(groupMktValue)}</span>
+                        ${groupLiability > 0 ? ` | <span style="color: #e67e22;">Liability: ${formatCurrency(groupLiability)}</span>` : ''}
                         | 
                         <span class="${pnlClass}">P/L: ${formatCurrency(groupPnL)} (${formatPercent(pnlPercent)})</span>
                     </td>
