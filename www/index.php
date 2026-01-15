@@ -199,6 +199,24 @@ header('Content-Type: text/html; charset=utf-8');
         return pos.contractDesc.trim().split(/\s+/)[0];
     }
 
+    function getDaysToExpiry(pos) {
+        if (pos.assetClass !== 'OPT') return null;
+        // Match 6 digits followed by P or C inside the brackets [TICKER YYMMDDP...]
+        const match = pos.contractDesc.match(/\[.*?\s+(\d{6})[CP]/);
+        if (match) {
+            const d = match[1];
+            const year = 2000 + parseInt(d.substring(0, 2));
+            const month = parseInt(d.substring(2, 4)) - 1;
+            const day = parseInt(d.substring(4, 6));
+            const expiry = new Date(year, month, day);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            expiry.setHours(0, 0, 0, 0);
+            return Math.ceil((expiry - today) / 86400000);
+        }
+        return null;
+    }
+
     function calculatePositionExposure(pos) {
         let exposure = 0;
         if (pos.assetClass === 'STK') {
@@ -339,6 +357,7 @@ header('Content-Type: text/html; charset=utf-8');
                     <tr>
                         <th>Ticker</th>
                         <th>Position</th>
+                        <th>Expires</th>
                         <th>Last</th>
                         <th>Value</th>
                         <th>Liability</th>
@@ -350,7 +369,7 @@ header('Content-Type: text/html; charset=utf-8');
         sortedTags.forEach((tag, tagIndex) => {
             // Add spacing between tag groups
             if (tagIndex > 0) {
-                html += '<tr class="tag-spacer"><td colspan="5"></td></tr>';
+                html += '<tr class="tag-spacer"><td colspan="6"></td></tr>';
             }
 
             const tickersInTag = tagGroups[tag].sort();
@@ -363,6 +382,7 @@ header('Content-Type: text/html; charset=utf-8');
                     groupPnL += pos.unrealizedPnl;
                     const posExposure = calculatePositionExposure(pos);
                     groupExposure += posExposure;
+                    const daysToExpiry = getDaysToExpiry(pos);
 
                     let liability = 0;
                     if (pos.assetClass === 'OPT' && pos.position < 0) {
@@ -397,6 +417,7 @@ header('Content-Type: text/html; charset=utf-8');
                                 <small style="color: #888;">${pos.assetClass === 'OPT' ? '(OPT)' : ''}</small>
                                 <div style="font-size: 0.75rem; color: #999;">${pos.contractDesc}</div>
                             </td>
+                            <td>${daysToExpiry !== null ? daysToExpiry + 'd' : '-'}</td>
                             <td>${pos.mktPrice.toFixed(2)}</td>
                             <td>${formatCurrency(pos.mktValue)}</td>
                             <td>${liability > 0 ? formatCurrency(liability) : '-'}</td>
@@ -406,7 +427,7 @@ header('Content-Type: text/html; charset=utf-8');
 
                 html += `
                     <tr class="summary-row">
-                        <td colspan="5" class="summary-cell">
+                        <td colspan="6" class="summary-cell">
                             <span class="pos-value">Exposure: ${formatCurrency(groupExposure)}</span>
                         </td>
                     </tr>
