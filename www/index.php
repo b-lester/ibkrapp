@@ -190,6 +190,37 @@ header('Content-Type: text/html; charset=utf-8');
         }
     }
 
+    function getTicker(pos) {
+        // Ticker is derived by parsing the contractDesc field.
+        // For options, it's usually the first part before spaces.
+        // Examples: 
+        // "NFLX" -> "NFLX"
+        // "IREN   FEB2026 40 P [IREN  260213P00040000 100]" -> "IREN"
+        return pos.contractDesc.trim().split(/\s+/)[0];
+    }
+
+    function calculatePositionExposure(pos) {
+        let exposure = 0;
+        if (pos.assetClass === 'STK') {
+            exposure = pos.mktValue;
+        }
+        
+        let liability = 0;
+        if (pos.assetClass === 'OPT' && pos.position < 0) {
+            const desc = pos.contractDesc.split('[')[0].trim();
+            const parts = desc.split(/\s+/);
+            if (parts.length >= 4) {
+                const strike = parseFloat(parts[parts.length - 2]);
+                const isPut = parts[parts.length - 1] === 'P';
+                if (isPut && !isNaN(strike)) {
+                    liability = Math.abs(pos.position * strike * 100);
+                }
+            }
+        }
+        exposure += liability;
+        return exposure;
+    }
+
     function renderAccountSummary(positions, cashData) {
         // Extract account level info from the BASE currency ledger of the first account found
         let positionsValue = 0;
@@ -210,6 +241,17 @@ header('Content-Type: text/html; charset=utf-8');
             }
         }
 
+        let totalExposure = 0;
+        if (positions) {
+            positions.forEach(pos => {
+                const ticker = getTicker(pos);
+                const tag = currentTags[ticker] || '';
+                if (tag !== 'safe') {
+                    totalExposure += calculatePositionExposure(pos);
+                }
+            });
+        }
+
         document.getElementById('account-container').innerHTML = `
             <table>
                 <thead>
@@ -217,7 +259,7 @@ header('Content-Type: text/html; charset=utf-8');
                         <th>Net Liquidation</th>
                         <th>Positions Value</th>
                         <th>Cash Balance</th>
-                        <th>Exposure</th>
+                        <th>Total Exposure</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -225,19 +267,16 @@ header('Content-Type: text/html; charset=utf-8');
                         <td><strong>${formatCurrency(netLiquidation)}</strong></td>
                         <td><strong>${formatCurrency(positionsValue)}</strong></td>
                         <td>${formatCurrency(cashBalance)}</td>
+                        <td>
+                            <strong>${formatCurrency(totalExposure)}</strong>
+                            <div style="font-size: 0.8rem; color: #666;">
+                                ${netLiquidation ? formatPercent((totalExposure / netLiquidation) * 100) : '0.00%'} of NLV
+                            </div>
+                        </td>
                     </tr>
                 </tbody>
             </table>
         `;
-    }
-
-    function getTicker(pos) {
-        // Ticker is derived by parsing the contractDesc field.
-        // For options, it's usually the first part before spaces.
-        // Examples: 
-        // "NFLX" -> "NFLX"
-        // "IREN   FEB2026 40 P [IREN  260213P00040000 100]" -> "IREN"
-        return pos.contractDesc.trim().split(/\s+/)[0];
     }
 
     function formatCurrency(value) {
@@ -322,6 +361,8 @@ header('Content-Type: text/html; charset=utf-8');
 
                 group.forEach((pos, index) => {
                     groupPnL += pos.unrealizedPnl;
+                    const posExposure = calculatePositionExposure(pos);
+                    groupExposure += posExposure;
 
                     let liability = 0;
                     if (pos.assetClass === 'OPT' && pos.position < 0) {
@@ -335,11 +376,6 @@ header('Content-Type: text/html; charset=utf-8');
                             }
                         }
                     }
-                    
-                    if (pos.assetClass === 'STK') {
-                        groupExposure += pos.mktValue;
-                    }
-                    groupExposure += liability;
 
                     html += `
                         <tr>
