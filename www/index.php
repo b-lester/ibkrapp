@@ -362,6 +362,7 @@ header('Content-Type: text/html; charset=utf-8');
                         <th>Expires</th>
                         <th>Last</th>
                         <th>Value</th>
+                        <th>PnL</th>
                         <th>Liability</th>
                     </tr>
                 </thead>
@@ -371,7 +372,7 @@ header('Content-Type: text/html; charset=utf-8');
         sortedTags.forEach((tag, tagIndex) => {
             // Add spacing between tag groups
             if (tagIndex > 0) {
-                html += '<tr class="tag-spacer"><td colspan="6"></td></tr>';
+                html += '<tr class="tag-spacer"><td colspan="7"></td></tr>';
             }
 
             const tickersInTag = tagGroups[tag].sort();
@@ -379,12 +380,18 @@ header('Content-Type: text/html; charset=utf-8');
                 const group = tickerGroups[ticker];
                 let groupPnL = 0;
                 let groupExposure = 0;
+                let groupCostBasis = 0;
 
                 group.forEach((pos, index) => {
                     groupPnL += pos.unrealizedPnl;
                     const posExposure = calculatePositionExposure(pos);
                     groupExposure += posExposure;
+                    const costBasis = Math.abs(pos.position * pos.avgCost);
+                    groupCostBasis += costBasis;
                     const daysToExpiry = getDaysToExpiry(pos);
+
+                    const pnlPercent = costBasis !== 0 ? (pos.unrealizedPnl / costBasis) * 100 : 0;
+                    const pnlClass = pos.unrealizedPnl >= 0 ? 'pnl-positive' : 'pnl-negative';
 
                     let liability = 0;
                     if (pos.assetClass === 'OPT' && pos.position < 0) {
@@ -422,15 +429,25 @@ header('Content-Type: text/html; charset=utf-8');
                             <td>${daysToExpiry !== null ? daysToExpiry + 'd' : '-'}</td>
                             <td>${pos.mktPrice.toFixed(2)}</td>
                             <td>${formatCurrency(pos.mktValue)}</td>
+                            <td class="${pnlClass}">
+                                <div>${formatCurrency(pos.unrealizedPnl)}</div>
+                                <div style="font-size: 0.75rem;">${formatPercent(pnlPercent)}</div>
+                            </td>
                             <td>${liability > 0 ? formatCurrency(liability) : '-'}</td>
                         </tr>
                     `;
                 });
 
+                const groupPnlPercent = groupCostBasis !== 0 ? (groupPnL / groupCostBasis) * 100 : 0;
+                const groupPnlClass = groupPnL >= 0 ? 'pnl-positive' : 'pnl-negative';
+
                 html += `
                     <tr class="summary-row">
-                        <td colspan="6" class="summary-cell">
-                            <div class="pos-value">Exposure: ${formatCurrency(groupExposure)}</div>
+                        <td colspan="7" class="summary-cell">
+                            <div class="pos-value">
+                                Total PnL: <span class="${groupPnlClass}">${formatCurrency(groupPnL)} (${formatPercent(groupPnlPercent)})</span>
+                            </div>
+                            <div class="pos-value" style="margin-top: 4px;">Exposure: ${formatCurrency(groupExposure)}</div>
                             <div style="font-size: 0.75rem; color: #666; margin-top: 2px;">
                                 ${currentNLV ? formatPercent((groupExposure / currentNLV) * 100) : '0.00%'} of NLV
                             </div>
