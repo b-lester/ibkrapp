@@ -161,6 +161,7 @@ header('Content-Type: text/html; charset=utf-8');
 
 <script>
     let currentTags = {};
+    let currentNLV = 0;
 
     async function fetchPositions() {
         try {
@@ -255,6 +256,7 @@ header('Content-Type: text/html; charset=utf-8');
                     positionsValue = (ledger.stockmarketvalue || 0) + (ledger.stockoptionmarketvalue || 0);
                     cashBalance = ledger.cashbalance || 0;
                     netLiquidation = ledger.netliquidationvalue || 0;
+                    currentNLV = netLiquidation;
                 }
             }
         }
@@ -428,7 +430,10 @@ header('Content-Type: text/html; charset=utf-8');
                 html += `
                     <tr class="summary-row">
                         <td colspan="6" class="summary-cell">
-                            <span class="pos-value">Exposure: ${formatCurrency(groupExposure)}</span>
+                            <div class="pos-value">Exposure: ${formatCurrency(groupExposure)}</div>
+                            <div style="font-size: 0.75rem; color: #666; margin-top: 2px;">
+                                ${currentNLV ? formatPercent((groupExposure / currentNLV) * 100) : '0.00%'} of NLV
+                            </div>
                         </td>
                     </tr>
                 `;
