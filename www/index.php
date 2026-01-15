@@ -113,6 +113,29 @@ header('Content-Type: text/html; charset=utf-8');
         .account-summary table {
             margin-top: 0;
         }
+        .tag-input {
+            width: 80px;
+            padding: 4px;
+            font-size: 0.8rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .tag-badge {
+            background-color: #e1f5fe;
+            color: #0288d1;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-left: 5px;
+        }
+        .tag-spacer {
+            height: 40px;
+        }
+        .tag-spacer td {
+            border: none;
+            background-color: transparent;
+        }
     </style>
 </head>
 <body>
@@ -137,18 +160,23 @@ header('Content-Type: text/html; charset=utf-8');
 </div>
 
 <script>
+    let currentTags = {};
+
     async function fetchPositions() {
         try {
-            const [posRes, cashRes] = await Promise.all([
+            const [posRes, cashRes, tagsRes] = await Promise.all([
                 fetch('list_positions.php'),
-                fetch('list_cash.php')
+                fetch('list_cash.php'),
+                fetch('tags.php')
             ]);
 
             if (!posRes.ok) throw new Error(`Positions fetch failed: ${posRes.status}`);
             if (!cashRes.ok) throw new Error(`Cash fetch failed: ${cashRes.status}`);
+            if (!tagsRes.ok) throw new Error(`Tags fetch failed: ${tagsRes.status}`);
 
             const posData = await posRes.json();
             const cashData = await cashRes.json();
+            currentTags = await tagsRes.json();
 
             renderAccountSummary(posData.positions, cashData);
             renderPositions(posData.positions);
@@ -220,22 +248,51 @@ header('Content-Type: text/html; charset=utf-8');
         return value.toFixed(2) + '%';
     }
 
+    async function saveTag(ticker, tag) {
+        try {
+            const res = await fetch('tags.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ticker, tag })
+            });
+            if (res.ok) {
+                const data = await res.json();
+                currentTags = data.tags;
+                fetchPositions(); // Refresh UI
+            }
+        } catch (error) {
+            console.error('Save tag error:', error);
+        }
+    }
+
     function renderPositions(positions) {
         if (!positions || positions.length === 0) {
             document.getElementById('table-container').innerHTML = '<div class="loading">No positions found.</div>';
             return;
         }
 
-        // Group by ticker
-        const groups = {};
+        // 1. Group by ticker
+        const tickerGroups = {};
         positions.forEach(pos => {
             const ticker = getTicker(pos);
-            if (!groups[ticker]) groups[ticker] = [];
-            groups[ticker].push(pos);
+            if (!tickerGroups[ticker]) tickerGroups[ticker] = [];
+            tickerGroups[ticker].push(pos);
         });
 
-        // Sort tickers alphabetically
-        const tickers = Object.keys(groups).sort();
+        // 2. Group ticker groups by tag
+        const tagGroups = {};
+        Object.keys(tickerGroups).forEach(ticker => {
+            const tag = currentTags[ticker] || '';
+            if (!tagGroups[tag]) tagGroups[tag] = [];
+            tagGroups[tag].push(ticker);
+        });
+
+        // 3. Sort tags: empty first, then alphabetically
+        const sortedTags = Object.keys(tagGroups).sort((a, b) => {
+            if (a === '') return -1;
+            if (b === '') return 1;
+            return a.localeCompare(b);
+        });
 
         let html = `
             <table>
@@ -251,54 +308,74 @@ header('Content-Type: text/html; charset=utf-8');
                 <tbody>
         `;
 
-        tickers.forEach(ticker => {
-            const group = groups[ticker];
-            let groupPnL = 0;
-            let groupExposure = 0;
+        sortedTags.forEach((tag, tagIndex) => {
+            // Add spacing between tag groups
+            if (tagIndex > 0) {
+                html += '<tr class="tag-spacer"><td colspan="5"></td></tr>';
+            }
 
-            group.forEach((pos, index) => {
-                groupPnL += pos.unrealizedPnl;
+            const tickersInTag = tagGroups[tag].sort();
+            tickersInTag.forEach(ticker => {
+                const group = tickerGroups[ticker];
+                let groupPnL = 0;
+                let groupExposure = 0;
 
-                let liability = 0;
-                if (pos.assetClass === 'OPT' && pos.position < 0) {
-                    const desc = pos.contractDesc.split('[')[0].trim();
-                    const parts = desc.split(/\s+/);
-                    if (parts.length >= 4) {
-                        const strike = parseFloat(parts[parts.length - 2]);
-                        const isPut = parts[parts.length - 1] === 'P';
-                        if (isPut && !isNaN(strike)) {
-                            liability = Math.abs(pos.position * strike * 100);
+                group.forEach((pos, index) => {
+                    groupPnL += pos.unrealizedPnl;
+
+                    let liability = 0;
+                    if (pos.assetClass === 'OPT' && pos.position < 0) {
+                        const desc = pos.contractDesc.split('[')[0].trim();
+                        const parts = desc.split(/\s+/);
+                        if (parts.length >= 4) {
+                            const strike = parseFloat(parts[parts.length - 2]);
+                            const isPut = parts[parts.length - 1] === 'P';
+                            if (isPut && !isNaN(strike)) {
+                                liability = Math.abs(pos.position * strike * 100);
+                            }
                         }
                     }
-                }
-                
-                if (pos.assetClass === 'STK') {
-                    groupExposure += pos.mktValue;
-                }
-                groupExposure += liability;
+                    
+                    if (pos.assetClass === 'STK') {
+                        groupExposure += pos.mktValue;
+                    }
+                    groupExposure += liability;
+
+                    html += `
+                        <tr>
+                            <td>
+                                ${index === 0 ? `<strong>${ticker}</strong>` : ''}
+                                ${index === 0 && currentTags[ticker] ? `<span class="tag-badge">${currentTags[ticker]}</span>` : ''}
+                                ${index === 0 ? `
+                                    <div style="margin-top: 4px;">
+                                        <input type="text" class="tag-input" 
+                                            placeholder="Add tag..." 
+                                            value="${currentTags[ticker] || ''}" 
+                                            onblur="saveTag('${ticker}', this.value)"
+                                            onkeydown="if(event.key==='Enter') saveTag('${ticker}', this.value)">
+                                    </div>
+                                ` : ''}
+                            </td>
+                            <td>
+                                ${pos.position} 
+                                <small style="color: #888;">${pos.assetClass === 'OPT' ? '(OPT)' : ''}</small>
+                                <div style="font-size: 0.75rem; color: #999;">${pos.contractDesc}</div>
+                            </td>
+                            <td>${pos.mktPrice.toFixed(2)}</td>
+                            <td>${formatCurrency(pos.mktValue)}</td>
+                            <td>${liability > 0 ? formatCurrency(liability) : '-'}</td>
+                        </tr>
+                    `;
+                });
 
                 html += `
-                    <tr>
-                        <td>${index === 0 ? `<strong>${ticker}</strong>` : ''}</td>
-                        <td>
-                            ${pos.position} 
-                            <small style="color: #888;">${pos.assetClass === 'OPT' ? '(OPT)' : ''}</small>
-                            <div style="font-size: 0.75rem; color: #999;">${pos.contractDesc}</div>
+                    <tr class="summary-row">
+                        <td colspan="5" class="summary-cell">
+                            <span class="pos-value">Exposure: ${formatCurrency(groupExposure)}</span>
                         </td>
-                        <td>${pos.mktPrice.toFixed(2)}</td>
-                        <td>${formatCurrency(pos.mktValue)}</td>
-                        <td>${liability > 0 ? formatCurrency(liability) : '-'}</td>
                     </tr>
                 `;
             });
-
-            html += `
-                <tr class="summary-row">
-                    <td colspan="5" class="summary-cell">
-                        <span class="pos-value">Exposure: ${formatCurrency(groupExposure)}</span>
-                    </td>
-                </tr>
-            `;
         });
 
         html += `
