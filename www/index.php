@@ -192,30 +192,29 @@ header('Content-Type: text/html; charset=utf-8');
 
         tickers.forEach(ticker => {
             const group = groups[ticker];
-            let groupMktValue = 0;
             let groupPnL = 0;
-            let groupLiability = 0;
+            let groupExposure = 0;
 
             group.forEach((pos, index) => {
-                groupMktValue += pos.mktValue;
                 groupPnL += pos.unrealizedPnl;
 
                 let liability = 0;
                 if (pos.assetClass === 'OPT' && pos.position < 0) {
                     const desc = pos.contractDesc.split('[')[0].trim();
                     const parts = desc.split(/\s+/);
-                    // Expected format: TICKER DATE STRIKE P/C
                     if (parts.length >= 4) {
                         const strike = parseFloat(parts[parts.length - 2]);
                         const isPut = parts[parts.length - 1] === 'P';
                         if (isPut && !isNaN(strike)) {
-                            // Liability = |position * strike|
-                            // Note: We multiply by 100 as each contract usually represents 100 shares
                             liability = Math.abs(pos.position * strike * 100);
                         }
                     }
                 }
-                groupLiability += liability;
+                
+                if (pos.assetClass === 'STK') {
+                    groupExposure += pos.mktValue;
+                }
+                groupExposure += liability;
 
                 html += `
                     <tr>
@@ -232,17 +231,10 @@ header('Content-Type: text/html; charset=utf-8');
                 `;
             });
 
-            const costBasis = groupMktValue - groupPnL;
-            const pnlPercent = Math.abs(costBasis) > 0.01 ? (groupPnL / Math.abs(costBasis)) * 100 : 0;
-            const pnlClass = groupPnL >= 0 ? 'pnl-positive' : 'pnl-negative';
-
             html += `
                 <tr class="summary-row">
                     <td colspan="5" class="summary-cell">
-                        <span class="pos-value">Total Value: ${formatCurrency(groupMktValue)}</span>
-                        ${groupLiability > 0 ? ` | <span style="color: #e67e22;">Liability: ${formatCurrency(groupLiability)}</span>` : ''}
-                        | 
-                        <span class="${pnlClass}">P/L: ${formatCurrency(groupPnL)} (${formatPercent(pnlPercent)})</span>
+                        <span class="pos-value">Exposure: ${formatCurrency(groupExposure)}</span>
                     </td>
                 </tr>
             `;
