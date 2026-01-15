@@ -1,0 +1,8 @@
+#!/bin/bash
+docker run --rm -d \
+  --name php-apache \
+  -p 8080:80 \
+  --add-host=host.docker.internal:host-gateway \
+  -v "$PWD":/var/www/html \
+  php-apache-mysqli
+
