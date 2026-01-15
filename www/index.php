@@ -163,20 +163,24 @@ header('Content-Type: text/html; charset=utf-8');
     }
 
     function renderAccountSummary(positions, cashData) {
-        // Calculate total position value
-        const totalPosValue = positions.reduce((sum, pos) => sum + (pos.mktValue || 0), 0);
-        
-        // Extract cash balance (using BASE currency from the first account found)
+        // Extract account level info from the BASE currency ledger of the first account found
+        let positionsValue = 0;
         let cashBalance = 0;
+        let netLiquidation = 0;
+
         if (cashData.accounts) {
             const accountIds = Object.keys(cashData.accounts);
             if (accountIds.length > 0) {
                 const firstAcc = cashData.accounts[accountIds[0]];
-                cashBalance = firstAcc.BASE ? firstAcc.BASE.cashbalance : 0;
+                const ledger = firstAcc.BASE || firstAcc.USD || Object.values(firstAcc)[0];
+                
+                if (ledger) {
+                    positionsValue = (ledger.stockmarketvalue || 0) + (ledger.stockoptionmarketvalue || 0);
+                    cashBalance = ledger.cashbalance || 0;
+                    netLiquidation = ledger.netliquidationvalue || 0;
+                }
             }
         }
-
-        const netLiquidation = totalPosValue + cashBalance;
 
         document.getElementById('account-container').innerHTML = `
             <table>
@@ -189,7 +193,7 @@ header('Content-Type: text/html; charset=utf-8');
                 </thead>
                 <tbody>
                     <tr>
-                        <td>${formatCurrency(totalPosValue)}</td>
+                        <td>${formatCurrency(positionsValue)}</td>
                         <td>${formatCurrency(cashBalance)}</td>
                         <td><strong>${formatCurrency(netLiquidation)}</strong></td>
                     </tr>
