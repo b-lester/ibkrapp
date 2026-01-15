@@ -136,6 +136,25 @@ header('Content-Type: text/html; charset=utf-8');
             border: none;
             background-color: transparent;
         }
+        .sorting-controls {
+            margin-top: 20px;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            font-size: 0.9rem;
+        }
+        .sorting-controls label {
+            font-weight: 600;
+            color: #666;
+        }
+        .sorting-controls select {
+            padding: 5px 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background-color: #fff;
+            font-size: 0.9rem;
+        }
     </style>
 </head>
 <body>
@@ -153,6 +172,16 @@ header('Content-Type: text/html; charset=utf-8');
         <div class="loading">Loading account info...</div>
     </div>
 
+    <div class="sorting-controls">
+        <label for="sort-select">Sort by:</label>
+        <select id="sort-select" onchange="currentSort = this.value; renderPositions(lastPositionsData);">
+            <option value="ticker">Ticker</option>
+            <option value="expires">Expires (Earliest)</option>
+            <option value="pnl">Total PnL (Lowest)</option>
+            <option value="exposure">Aggregated Exposure (Highest)</option>
+        </select>
+    </div>
+
     <div id="status"></div>
     <div id="table-container">
         <div class="loading">Loading positions...</div>
@@ -162,6 +191,8 @@ header('Content-Type: text/html; charset=utf-8');
 <script>
     let currentTags = {};
     let currentNLV = 0;
+    let currentSort = 'ticker';
+    let lastPositionsData = [];
 
     async function fetchPositions() {
         try {
@@ -179,6 +210,7 @@ header('Content-Type: text/html; charset=utf-8');
             const cashData = await cashRes.json();
             currentTags = await tagsRes.json();
 
+            lastPositionsData = posData.positions;
             renderAccountSummary(posData.positions, cashData);
             renderPositions(posData.positions);
         } catch (error) {
@@ -330,23 +362,60 @@ header('Content-Type: text/html; charset=utf-8');
             return;
         }
 
-        // 1. Group by ticker
+        // 1. Group by ticker and pre-calculate group-level stats for sorting
         const tickerGroups = {};
         positions.forEach(pos => {
             const ticker = getTicker(pos);
-            if (!tickerGroups[ticker]) tickerGroups[ticker] = [];
-            tickerGroups[ticker].push(pos);
+            if (!tickerGroups[ticker]) {
+                tickerGroups[ticker] = {
+                    positions: [],
+                    totalPnL: 0,
+                    minDaysToExpiry: Infinity,
+                    totalExposure: 0,
+                    costBasis: 0
+                };
+            }
+            const group = tickerGroups[ticker];
+            group.positions.push(pos);
+            group.totalPnL += pos.unrealizedPnl;
+            group.totalExposure += calculatePositionExposure(pos);
+            group.costBasis += Math.abs(pos.position * pos.avgCost);
+            
+            const days = getDaysToExpiry(pos);
+            if (days !== null && days < group.minDaysToExpiry) {
+                group.minDaysToExpiry = days;
+            }
         });
 
-        // 2. Group ticker groups by tag
+        // 2. Sort tickers based on selected option
+        const sortedTickers = Object.keys(tickerGroups).sort((a, b) => {
+            const groupA = tickerGroups[a];
+            const groupB = tickerGroups[b];
+            
+            switch (currentSort) {
+                case 'expires':
+                    const expiryA = groupA.minDaysToExpiry === Infinity ? 99999 : groupA.minDaysToExpiry;
+                    const expiryB = groupB.minDaysToExpiry === Infinity ? 99999 : groupB.minDaysToExpiry;
+                    return expiryA - expiryB;
+                case 'pnl':
+                    return groupA.totalPnL - groupB.totalPnL;
+                case 'exposure':
+                    return groupB.totalExposure - groupA.totalExposure;
+                case 'ticker':
+                default:
+                    return a.localeCompare(b);
+            }
+        });
+
+        // 3. Group sorted tickers by tag
         const tagGroups = {};
-        Object.keys(tickerGroups).forEach(ticker => {
+        sortedTickers.forEach(ticker => {
             const tag = currentTags[ticker] || '';
             if (!tagGroups[tag]) tagGroups[tag] = [];
             tagGroups[tag].push(ticker);
         });
 
-        // 3. Sort tags: empty first, then alphabetically
+        // 4. Sort tags: empty first, then alphabetically
         const sortedTags = Object.keys(tagGroups).sort((a, b) => {
             if (a === '') return -1;
             if (b === '') return 1;
@@ -375,19 +444,14 @@ header('Content-Type: text/html; charset=utf-8');
                 html += '<tr class="tag-spacer"><td colspan="7"></td></tr>';
             }
 
-            const tickersInTag = tagGroups[tag].sort();
+            const tickersInTag = tagGroups[tag]; // Already sorted by our criteria in step 2
             tickersInTag.forEach(ticker => {
-                const group = tickerGroups[ticker];
-                let groupPnL = 0;
-                let groupExposure = 0;
-                let groupCostBasis = 0;
-
+                const groupData = tickerGroups[ticker];
+                const group = groupData.positions;
+                
                 group.forEach((pos, index) => {
-                    groupPnL += pos.unrealizedPnl;
                     const posExposure = calculatePositionExposure(pos);
-                    groupExposure += posExposure;
                     const costBasis = Math.abs(pos.position * pos.avgCost);
-                    groupCostBasis += costBasis;
                     const daysToExpiry = getDaysToExpiry(pos);
 
                     const pnlPercent = costBasis !== 0 ? (pos.unrealizedPnl / costBasis) * 100 : 0;
@@ -438,6 +502,9 @@ header('Content-Type: text/html; charset=utf-8');
                     `;
                 });
 
+                const groupPnL = groupData.totalPnL;
+                const groupCostBasis = groupData.costBasis;
+                const groupExposure = groupData.totalExposure;
                 const groupPnlPercent = groupCostBasis !== 0 ? (groupPnL / groupCostBasis) * 100 : 0;
                 const groupPnlClass = groupPnL >= 0 ? 'pnl-positive' : 'pnl-negative';
 
