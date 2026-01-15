@@ -103,6 +103,16 @@ header('Content-Type: text/html; charset=utf-8');
             background-color: #fdf2f2;
             margin-top: 20px;
         }
+        .account-summary {
+            margin-bottom: 30px;
+            background-color: #fff;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #eee;
+        }
+        .account-summary table {
+            margin-top: 0;
+        }
     </style>
 </head>
 <body>
@@ -115,6 +125,11 @@ header('Content-Type: text/html; charset=utf-8');
             <span id="auth-text">Checking session...</span>
         </div>
     </div>
+
+    <div id="account-container" class="account-summary">
+        <div class="loading">Loading account info...</div>
+    </div>
+
     <div id="status"></div>
     <div id="table-container">
         <div class="loading">Loading positions...</div>
@@ -124,22 +139,63 @@ header('Content-Type: text/html; charset=utf-8');
 <script>
     async function fetchPositions() {
         try {
-            const response = await fetch('list_positions.php');
-            if (!response.ok) {
-                const errorData = await response.json();
-                throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
-            }
-            const data = await response.json();
-            renderPositions(data.positions);
+            const [posRes, cashRes] = await Promise.all([
+                fetch('list_positions.php'),
+                fetch('list_cash.php')
+            ]);
+
+            if (!posRes.ok) throw new Error(`Positions fetch failed: ${posRes.status}`);
+            if (!cashRes.ok) throw new Error(`Cash fetch failed: ${cashRes.status}`);
+
+            const posData = await posRes.json();
+            const cashData = await cashRes.json();
+
+            renderAccountSummary(posData.positions, cashData);
+            renderPositions(posData.positions);
         } catch (error) {
             console.error('Fetch error:', error);
             document.getElementById('table-container').innerHTML = `
                 <div class="error">
                     <strong>Error:</strong> ${error.message}
-                    ${error.message.includes('authenticated') ? '<br><br><a href="https://localhost:5050/" target="_blank">Click here to log in to IBKR Gateway</a>' : ''}
                 </div>
             `;
         }
+    }
+
+    function renderAccountSummary(positions, cashData) {
+        // Calculate total position value
+        const totalPosValue = positions.reduce((sum, pos) => sum + (pos.mktValue || 0), 0);
+        
+        // Extract cash balance (using BASE currency from the first account found)
+        let cashBalance = 0;
+        if (cashData.accounts) {
+            const accountIds = Object.keys(cashData.accounts);
+            if (accountIds.length > 0) {
+                const firstAcc = cashData.accounts[accountIds[0]];
+                cashBalance = firstAcc.BASE ? firstAcc.BASE.cashbalance : 0;
+            }
+        }
+
+        const netLiquidation = totalPosValue + cashBalance;
+
+        document.getElementById('account-container').innerHTML = `
+            <table>
+                <thead>
+                    <tr>
+                        <th>Positions Value</th>
+                        <th>Cash Balance</th>
+                        <th>Net Liquidation</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td>${formatCurrency(totalPosValue)}</td>
+                        <td>${formatCurrency(cashBalance)}</td>
+                        <td><strong>${formatCurrency(netLiquidation)}</strong></td>
+                    </tr>
+                </tbody>
+            </table>
+        `;
     }
 
     function getTicker(pos) {
