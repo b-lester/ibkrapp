@@ -503,16 +503,14 @@ header('Content-Type: text/html; charset=utf-8');
                 });
 
                 const groupPnL = groupData.totalPnL;
-                const groupCostBasis = groupData.costBasis;
                 const groupExposure = groupData.totalExposure;
-                const groupPnlPercent = groupCostBasis !== 0 ? (groupPnL / groupCostBasis) * 100 : 0;
                 const groupPnlClass = groupPnL >= 0 ? 'pnl-positive' : 'pnl-negative';
 
                 html += `
                     <tr class="summary-row">
                         <td colspan="7" class="summary-cell">
                             <div class="pos-value">
-                                Total PnL: <span class="${groupPnlClass}">${formatCurrency(groupPnL)} (${formatPercent(groupPnlPercent)})</span>
+                                Total PnL: <span class="${groupPnlClass}">${formatCurrency(groupPnL)}</span>
                             </div>
                             <div class="pos-value" style="margin-top: 4px;">Exposure: ${formatCurrency(groupExposure)}</div>
                             <div style="font-size: 0.75rem; color: #666; margin-top: 2px;">
