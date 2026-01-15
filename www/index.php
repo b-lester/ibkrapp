@@ -451,7 +451,7 @@ header('Content-Type: text/html; charset=utf-8');
     // Initial fetch
     fetchPositions();
 
-    async function tickleSession() {
+    async function tickleSession(retry = true) {
         const authDot = document.getElementById('auth-dot');
         const authText = document.getElementById('auth-text');
         
@@ -461,23 +461,33 @@ header('Content-Type: text/html; charset=utf-8');
                 method: 'GET'
             });
             
-            // If CORS is an issue, we might need a small PHP helper. 
-            // But following instructions to call the endpoint directly:
             const data = await response.json();
-            
             const isAuthenticated = data.iserver && data.iserver.authStatus && data.iserver.authStatus.authenticated === true;
             
             if (isAuthenticated) {
                 authDot.className = 'status-dot authenticated';
                 authText.innerText = 'Session Active';
+            } else if (retry) {
+                console.log('Session not authenticated, trying reauthenticate...');
+                await fetch('reauthenticate_proxy.php', { method: 'POST' });
+                return tickleSession(false);
             } else {
                 authDot.className = 'status-dot unauthenticated';
                 authText.innerText = 'Session Expired';
             }
         } catch (error) {
             console.error('Tickle error:', error);
+            if (retry) {
+                console.log('Connection error, trying reauthenticate...');
+                try {
+                    await fetch('reauthenticate_proxy.php', { method: 'POST' });
+                    return tickleSession(false);
+                } catch (reauthError) {
+                    console.error('Reauthentication failed:', reauthError);
+                }
+            }
             authDot.className = 'status-dot unauthenticated';
-            authText.innerText = 'Connection Error';
+            authText.innerHTML = 'Connection Error (<a href="https://localhost:5050/" target="_blank">Login</a>)';
         }
     }
 
