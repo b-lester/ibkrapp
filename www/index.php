@@ -468,12 +468,40 @@ header('Content-Type: text/html; charset=utf-8');
     // Initial fetch
     fetchPositions();
 
-    async function tickleSession(retry = true) {
+    let isReauthenticating = false;
+
+    async function manualReauthenticate() {
+        if (isReauthenticating) return;
+        isReauthenticating = true;
+
+        const authText = document.getElementById('auth-text');
+        authText.innerText = 'Re-authenticating...';
+        try {
+            const response = await fetch('reauthenticate_proxy.php', { method: 'POST' });
+            // Even if response is OK, we need to check if we are actually authenticated now
+            await tickleSession(true); // Pass true to indicate this is a check after re-auth
+            
+            const isAuthenticated = document.getElementById('auth-dot').classList.contains('authenticated');
+            if (!isAuthenticated) {
+                // If still not authenticated after re-auth attempt, show Login link
+                authText.innerHTML = 'Re-auth failed. (<a href="https://localhost:5050/" target="_blank">Login</a>)';
+            }
+        } catch (error) {
+            console.error('Manual re-auth error:', error);
+            authText.innerHTML = 'Re-auth failed. (<a href="https://localhost:5050/" target="_blank">Login</a>)';
+        } finally {
+            isReauthenticating = false;
+        }
+    }
+
+    async function tickleSession(isAfterManualReauth = false) {
+        // Only skip if we are in the middle of re-authenticating (unless this IS the check after re-auth)
+        if (isReauthenticating && !isAfterManualReauth) return;
+
         const authDot = document.getElementById('auth-dot');
         const authText = document.getElementById('auth-text');
         
         try {
-            // Using a proxy script to avoid CORS issues
             const response = await fetch('tickle_proxy.php', {
                 method: 'GET'
             });
@@ -484,27 +512,20 @@ header('Content-Type: text/html; charset=utf-8');
             if (isAuthenticated) {
                 authDot.className = 'status-dot authenticated';
                 authText.innerText = 'Session Active';
-            } else if (retry) {
-                console.log('Session not authenticated, trying reauthenticate...');
-                await fetch('reauthenticate_proxy.php', { method: 'POST' });
-                return tickleSession(false);
             } else {
                 authDot.className = 'status-dot unauthenticated';
-                authText.innerText = 'Session Expired';
+                // Only show Re-authenticate if we haven't just tried it and failed, 
+                // and if we aren't already showing a Login link.
+                if (!isAfterManualReauth && !authText.innerHTML.includes('localhost:5050')) {
+                    authText.innerHTML = 'Session Expired (<a href="#" onclick="manualReauthenticate(); return false;">Re-authenticate</a>)';
+                }
             }
         } catch (error) {
             console.error('Tickle error:', error);
-            if (retry) {
-                console.log('Connection error, trying reauthenticate...');
-                try {
-                    await fetch('reauthenticate_proxy.php', { method: 'POST' });
-                    return tickleSession(false);
-                } catch (reauthError) {
-                    console.error('Reauthentication failed:', reauthError);
-                }
-            }
             authDot.className = 'status-dot unauthenticated';
-            authText.innerHTML = 'Connection Error (<a href="https://localhost:5050/" target="_blank">Login</a>)';
+            if (!isAfterManualReauth && !authText.innerHTML.includes('localhost:5050')) {
+                authText.innerHTML = 'Connection Error (<a href="#" onclick="manualReauthenticate(); return false;">Re-authenticate</a>)';
+            }
         }
     }
 
