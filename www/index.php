@@ -186,16 +186,17 @@ header('Content-Type: text/html; charset=utf-8');
             <table>
                 <thead>
                     <tr>
+                        <th>Net Liquidation</th>
                         <th>Positions Value</th>
                         <th>Cash Balance</th>
-                        <th>Net Liquidation</th>
+                        <th>Exposure</th>
                     </tr>
                 </thead>
                 <tbody>
                     <tr>
-                        <td>${formatCurrency(positionsValue)}</td>
-                        <td>${formatCurrency(cashBalance)}</td>
                         <td><strong>${formatCurrency(netLiquidation)}</strong></td>
+                        <td><strong>${formatCurrency(positionsValue)}</strong></td>
+                        <td>${formatCurrency(cashBalance)}</td>
                     </tr>
                 </tbody>
             </table>
