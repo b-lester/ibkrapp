@@ -182,6 +182,8 @@ header('Content-Type: text/html; charset=utf-8');
                     <tr>
                         <th>Ticker</th>
                         <th>Position</th>
+                        <th>Last</th>
+                        <th>Value</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -204,6 +206,8 @@ header('Content-Type: text/html; charset=utf-8');
                             <small style="color: #888;">${pos.assetClass === 'OPT' ? '(OPT)' : ''}</small>
                             <div style="font-size: 0.75rem; color: #999;">${pos.contractDesc}</div>
                         </td>
+                        <td>${pos.mktPrice.toFixed(2)}</td>
+                        <td>${formatCurrency(pos.mktValue)}</td>
                     </tr>
                 `;
             });
@@ -214,7 +218,7 @@ header('Content-Type: text/html; charset=utf-8');
 
             html += `
                 <tr class="summary-row">
-                    <td colspan="2" class="summary-cell">
+                    <td colspan="4" class="summary-cell">
                         <span class="pos-value">Total Value: ${formatCurrency(groupMktValue)}</span>
                         | 
                         <span class="${pnlClass}">P/L: ${formatCurrency(groupPnL)} (${formatPercent(pnlPercent)})</span>
