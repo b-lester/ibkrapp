@@ -12,24 +12,25 @@ header('Content-Type: text/html; charset=utf-8');
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             background-color: #f4f7f6;
             margin: 0;
-            padding: 20px;
+            padding: 10px;
             color: #333;
+            font-size: 0.85rem;
         }
         .header-top {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 10px;
+            margin-bottom: 5px;
         }
         .auth-status {
             display: flex;
             align-items: center;
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: #666;
         }
         .status-dot {
-            width: 10px;
-            height: 10px;
+            width: 8px;
+            height: 8px;
             border-radius: 50%;
             margin-right: 6px;
             background-color: #999;
@@ -37,32 +38,34 @@ header('Content-Type: text/html; charset=utf-8');
         .status-dot.authenticated { background-color: #27ae60; }
         .status-dot.unauthenticated { background-color: #e74c3c; }
         .container {
-            max-width: 1000px;
+            max-width: 1100px;
             margin: 0 auto;
             background: #fff;
-            padding: 20px;
+            padding: 10px 20px;
             border-radius: 8px;
             box-shadow: 0 2px 10px rgba(0,0,0,0.1);
         }
         h1 {
             text-align: center;
             color: #2c3e50;
+            font-size: 1.4rem;
+            margin: 5px 0;
         }
         table {
             width: 100%;
             border-collapse: collapse;
-            margin-top: 20px;
+            margin-top: 10px;
         }
         th, td {
             text-align: left;
-            padding: 12px;
+            padding: 6px 8px;
             border-bottom: 1px solid #eee;
         }
         th {
             background-color: #f8f9fa;
             font-weight: 600;
             text-transform: uppercase;
-            font-size: 0.85rem;
+            font-size: 0.7rem;
             color: #666;
         }
         .group-header {
@@ -71,13 +74,19 @@ header('Content-Type: text/html; charset=utf-8');
         }
         .summary-row {
             background-color: #fafafa;
-            font-size: 0.9rem;
+            font-size: 0.8rem;
             color: #555;
         }
         .summary-cell {
             text-align: right;
-            padding-right: 20px;
+            padding-right: 10px;
             font-style: italic;
+        }
+        .summary-content {
+            display: flex;
+            justify-content: flex-end;
+            gap: 20px;
+            align-items: center;
         }
         .pos-value {
             font-weight: bold;
@@ -90,23 +99,23 @@ header('Content-Type: text/html; charset=utf-8');
         }
         .loading {
             text-align: center;
-            padding: 20px;
+            padding: 10px;
             font-style: italic;
             color: #999;
         }
         .error {
             color: #e74c3c;
             text-align: center;
-            padding: 20px;
+            padding: 10px;
             border: 1px solid #e74c3c;
             border-radius: 4px;
             background-color: #fdf2f2;
-            margin-top: 20px;
+            margin-top: 10px;
         }
         .account-summary {
-            margin-bottom: 30px;
+            margin-bottom: 15px;
             background-color: #fff;
-            padding: 15px;
+            padding: 10px;
             border-radius: 8px;
             border: 1px solid #eee;
         }
@@ -114,46 +123,46 @@ header('Content-Type: text/html; charset=utf-8');
             margin-top: 0;
         }
         .tag-input {
-            width: 80px;
-            padding: 4px;
-            font-size: 0.8rem;
+            width: 70px;
+            padding: 2px 4px;
+            font-size: 0.75rem;
             border: 1px solid #ddd;
             border-radius: 4px;
         }
         .tag-badge {
             background-color: #e1f5fe;
             color: #0288d1;
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-size: 0.75rem;
+            padding: 1px 4px;
+            border-radius: 3px;
+            font-size: 0.7rem;
             font-weight: 600;
             margin-left: 5px;
         }
         .tag-spacer {
-            height: 40px;
+            height: 20px;
         }
         .tag-spacer td {
             border: none;
             background-color: transparent;
         }
         .sorting-controls {
-            margin-top: 20px;
-            margin-bottom: 10px;
+            margin-top: 10px;
+            margin-bottom: 5px;
             display: flex;
             align-items: center;
-            gap: 15px;
-            font-size: 0.9rem;
+            gap: 10px;
+            font-size: 0.8rem;
         }
         .sorting-controls label {
             font-weight: 600;
             color: #666;
         }
         .sorting-controls select {
-            padding: 5px 10px;
+            padding: 2px 5px;
             border: 1px solid #ddd;
             border-radius: 4px;
             background-color: #fff;
-            font-size: 0.9rem;
+            font-size: 0.8rem;
         }
     </style>
 </head>
@@ -509,12 +518,16 @@ header('Content-Type: text/html; charset=utf-8');
                 html += `
                     <tr class="summary-row">
                         <td colspan="7" class="summary-cell">
-                            <div class="pos-value">
-                                Total PnL: <span class="${groupPnlClass}">${formatCurrency(groupPnL)}</span>
-                            </div>
-                            <div class="pos-value" style="margin-top: 4px;">Exposure: ${formatCurrency(groupExposure)}</div>
-                            <div style="font-size: 0.75rem; color: #666; margin-top: 2px;">
-                                ${currentNLV ? formatPercent((groupExposure / currentNLV) * 100) : '0.00%'} of NLV
+                            <div class="summary-content">
+                                <div>
+                                    Total PnL: <span class="${groupPnlClass}">${formatCurrency(groupPnL)}</span>
+                                </div>
+                                <div class="pos-value">
+                                    Exposure: ${formatCurrency(groupExposure)}
+                                </div>
+                                <div style="font-size: 0.75rem; color: #666;">
+                                    ${currentNLV ? formatPercent((groupExposure / currentNLV) * 100) : '0.00%'} of NLV
+                                </div>
                             </div>
                         </td>
                     </tr>
