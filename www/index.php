@@ -183,13 +183,23 @@ header('Content-Type: text/html; charset=utf-8');
     </div>
 
     <div class="sorting-controls">
-        <label for="sort-select">Sort by:</label>
-        <select id="sort-select" onchange="updateSort(this.value)">
-            <option value="ticker">Ticker</option>
-            <option value="expires">Expires (Earliest)</option>
-            <option value="pnl">Total PnL (Lowest)</option>
-            <option value="exposure">Aggregated Exposure (Highest)</option>
-        </select>
+        <div style="display: flex; align-items: center; gap: 5px;">
+            <label for="sort-select">Sort:</label>
+            <select id="sort-select" onchange="updateSort(this.value)">
+                <option value="ticker">Ticker</option>
+                <option value="expires">Expires (Earliest)</option>
+                <option value="pnl">Total PnL (Lowest)</option>
+                <option value="exposure">Aggregated Exposure (Highest)</option>
+            </select>
+        </div>
+        <div style="display: flex; align-items: center; gap: 5px;">
+            <label for="filter-select">Filter:</label>
+            <select id="filter-select" onchange="updateFilter(this.value)">
+                <option value="all">All</option>
+                <option value="STK">Stocks</option>
+                <option value="OPT">Options</option>
+            </select>
+        </div>
     </div>
 
     <div id="status"></div>
@@ -202,6 +212,7 @@ header('Content-Type: text/html; charset=utf-8');
     let currentTags = {};
     let currentNLV = 0;
     let currentSort = 'ticker';
+    let currentFilter = 'all';
     let lastPositionsData = [];
 
     async function fetchPositions() {
@@ -226,6 +237,10 @@ header('Content-Type: text/html; charset=utf-8');
             if (prefs.sort) {
                 currentSort = prefs.sort;
                 document.getElementById('sort-select').value = currentSort;
+            }
+            if (prefs.filter) {
+                currentFilter = prefs.filter;
+                document.getElementById('filter-select').value = currentFilter;
             }
 
             lastPositionsData = posData.positions;
@@ -388,6 +403,20 @@ header('Content-Type: text/html; charset=utf-8');
         }
     }
 
+    async function updateFilter(filterValue) {
+        currentFilter = filterValue;
+        renderPositions(lastPositionsData);
+        try {
+            await fetch('preferences.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filter: filterValue })
+            });
+        } catch (error) {
+            console.error('Save filter preference error:', error);
+        }
+    }
+
     function editTag(ticker) {
         const oldTag = currentTags[ticker] || '';
         const newTag = prompt(`Enter tag for ${ticker}:`, oldTag);
@@ -402,9 +431,20 @@ header('Content-Type: text/html; charset=utf-8');
             return;
         }
 
+        // 0. Filter positions
+        const filteredPositions = positions.filter(pos => {
+            if (currentFilter === 'all') return true;
+            return pos.assetClass === currentFilter;
+        });
+
+        if (filteredPositions.length === 0) {
+            document.getElementById('table-container').innerHTML = '<div class="loading">No positions match the current filter.</div>';
+            return;
+        }
+
         // 1. Group by ticker and pre-calculate group-level stats for sorting
         const tickerGroups = {};
-        positions.forEach(pos => {
+        filteredPositions.forEach(pos => {
             const ticker = getTicker(pos);
             if (!tickerGroups[ticker]) {
                 tickerGroups[ticker] = {
