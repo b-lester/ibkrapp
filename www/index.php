@@ -122,13 +122,6 @@ header('Content-Type: text/html; charset=utf-8');
         .account-summary table {
             margin-top: 0;
         }
-        .tag-input {
-            width: 70px;
-            padding: 2px 4px;
-            font-size: 0.75rem;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-        }
         .tag-badge {
             background-color: #e1f5fe;
             color: #0288d1;
@@ -163,6 +156,14 @@ header('Content-Type: text/html; charset=utf-8');
             border-radius: 4px;
             background-color: #fff;
             font-size: 0.8rem;
+        }
+        .ticker-name {
+            cursor: pointer;
+            text-decoration: underline dotted #ccc;
+        }
+        .ticker-name:hover {
+            color: #0288d1;
+            text-decoration-color: #0288d1;
         }
     </style>
 </head>
@@ -365,6 +366,14 @@ header('Content-Type: text/html; charset=utf-8');
         }
     }
 
+    function editTag(ticker) {
+        const oldTag = currentTags[ticker] || '';
+        const newTag = prompt(`Enter tag for ${ticker}:`, oldTag);
+        if (newTag !== null && newTag !== oldTag) {
+            saveTag(ticker, newTag.trim());
+        }
+    }
+
     function renderPositions(positions) {
         if (!positions || positions.length === 0) {
             document.getElementById('table-container').innerHTML = '<div class="loading">No positions found.</div>';
@@ -482,17 +491,8 @@ header('Content-Type: text/html; charset=utf-8');
                     html += `
                         <tr>
                             <td>
-                                ${index === 0 ? `<strong>${ticker}</strong>` : ''}
+                                ${index === 0 ? `<strong class="ticker-name" onclick="editTag('${ticker}')">${ticker}</strong>` : ''}
                                 ${index === 0 && currentTags[ticker] ? `<span class="tag-badge">${currentTags[ticker]}</span>` : ''}
-                                ${index === 0 ? `
-                                    <div style="margin-top: 4px;">
-                                        <input type="text" class="tag-input" 
-                                            placeholder="Add tag..." 
-                                            value="${currentTags[ticker] || ''}" 
-                                            onblur="saveTag('${ticker}', this.value)"
-                                            onkeydown="if(event.key==='Enter') saveTag('${ticker}', this.value)">
-                                    </div>
-                                ` : ''}
                             </td>
                             <td>
                                 ${pos.position} 
