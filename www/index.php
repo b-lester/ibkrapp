@@ -447,6 +447,7 @@ header('Content-Type: text/html; charset=utf-8');
                         <th>Ticker</th>
                         <th>Position</th>
                         <th>Expires</th>
+                        <th>Avg</th>
                         <th>Last</th>
                         <th>Value</th>
                         <th>PnL</th>
@@ -459,7 +460,7 @@ header('Content-Type: text/html; charset=utf-8');
         sortedTags.forEach((tag, tagIndex) => {
             // Add spacing between tag groups
             if (tagIndex > 0) {
-                html += '<tr class="tag-spacer"><td colspan="7"></td></tr>';
+                html += '<tr class="tag-spacer"><td colspan="8"></td></tr>';
             }
 
             const tickersInTag = tagGroups[tag]; // Already sorted by our criteria in step 2
@@ -500,6 +501,7 @@ header('Content-Type: text/html; charset=utf-8');
                                 <div style="font-size: 0.75rem; color: #999;">${pos.contractDesc}</div>
                             </td>
                             <td>${daysToExpiry !== null ? daysToExpiry + 'd' : '-'}</td>
+                            <td>${pos.avgPrice.toFixed(2)}</td>
                             <td>${pos.mktPrice.toFixed(2)}</td>
                             <td>${formatCurrency(pos.mktValue)}</td>
                             <td class="${pnlClass}">
@@ -517,7 +519,7 @@ header('Content-Type: text/html; charset=utf-8');
 
                 html += `
                     <tr class="summary-row">
-                        <td colspan="7" class="summary-cell">
+                        <td colspan="8" class="summary-cell">
                             <div class="summary-content">
                                 <div>
                                     Total PnL: <span class="${groupPnlClass}">${formatCurrency(groupPnL)}</span>
