@@ -184,7 +184,7 @@ header('Content-Type: text/html; charset=utf-8');
 
     <div class="sorting-controls">
         <label for="sort-select">Sort by:</label>
-        <select id="sort-select" onchange="currentSort = this.value; renderPositions(lastPositionsData);">
+        <select id="sort-select" onchange="updateSort(this.value)">
             <option value="ticker">Ticker</option>
             <option value="expires">Expires (Earliest)</option>
             <option value="pnl">Total PnL (Lowest)</option>
@@ -206,19 +206,27 @@ header('Content-Type: text/html; charset=utf-8');
 
     async function fetchPositions() {
         try {
-            const [posRes, cashRes, tagsRes] = await Promise.all([
+            const [posRes, cashRes, tagsRes, prefsRes] = await Promise.all([
                 fetch('list_positions.php'),
                 fetch('list_cash.php'),
-                fetch('tags.php')
+                fetch('tags.php'),
+                fetch('preferences.php')
             ]);
 
             if (!posRes.ok) throw new Error(`Positions fetch failed: ${posRes.status}`);
             if (!cashRes.ok) throw new Error(`Cash fetch failed: ${cashRes.status}`);
             if (!tagsRes.ok) throw new Error(`Tags fetch failed: ${tagsRes.status}`);
+            if (!prefsRes.ok) throw new Error(`Preferences fetch failed: ${prefsRes.status}`);
 
             const posData = await posRes.json();
             const cashData = await cashRes.json();
             currentTags = await tagsRes.json();
+            const prefs = await prefsRes.json();
+
+            if (prefs.sort) {
+                currentSort = prefs.sort;
+                document.getElementById('sort-select').value = currentSort;
+            }
 
             lastPositionsData = posData.positions;
             renderAccountSummary(posData.positions, cashData);
@@ -363,6 +371,20 @@ header('Content-Type: text/html; charset=utf-8');
             }
         } catch (error) {
             console.error('Save tag error:', error);
+        }
+    }
+
+    async function updateSort(sortValue) {
+        currentSort = sortValue;
+        renderPositions(lastPositionsData);
+        try {
+            await fetch('preferences.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sort: sortValue })
+            });
+        } catch (error) {
+            console.error('Save sort preference error:', error);
         }
     }
 
