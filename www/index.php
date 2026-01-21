@@ -200,6 +200,10 @@ header('Content-Type: text/html; charset=utf-8');
                 <option value="OPT">Options</option>
             </select>
         </div>
+        <div style="display: flex; align-items: center; gap: 5px; margin-left: 10px;">
+            <input type="checkbox" id="group-ticker-toggle" onchange="updateGroupByTicker(this.checked)">
+            <label for="group-ticker-toggle">Group by Ticker</label>
+        </div>
     </div>
 
     <div id="status"></div>
@@ -213,6 +217,7 @@ header('Content-Type: text/html; charset=utf-8');
     let currentNLV = 0;
     let currentSort = 'ticker';
     let currentFilter = 'all';
+    let currentGroupByTicker = true;
     let lastPositionsData = [];
 
     async function fetchPositions() {
@@ -241,6 +246,13 @@ header('Content-Type: text/html; charset=utf-8');
             if (prefs.filter) {
                 currentFilter = prefs.filter;
                 document.getElementById('filter-select').value = currentFilter;
+            }
+            if (prefs.hasOwnProperty('groupByTicker')) {
+                currentGroupByTicker = prefs.groupByTicker;
+                document.getElementById('group-ticker-toggle').checked = currentGroupByTicker;
+            } else {
+                // Default to checked
+                document.getElementById('group-ticker-toggle').checked = true;
             }
 
             lastPositionsData = posData.positions;
@@ -417,6 +429,20 @@ header('Content-Type: text/html; charset=utf-8');
         }
     }
 
+    async function updateGroupByTicker(enabled) {
+        currentGroupByTicker = enabled;
+        renderPositions(lastPositionsData);
+        try {
+            await fetch('preferences.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ groupByTicker: enabled })
+            });
+        } catch (error) {
+            console.error('Save group-by preference error:', error);
+        }
+    }
+
     function editTag(ticker) {
         const oldTag = currentTags[ticker] || '';
         const newTag = prompt(`Enter tag for ${ticker}:`, oldTag);
@@ -442,66 +468,6 @@ header('Content-Type: text/html; charset=utf-8');
             return;
         }
 
-        // 1. Group by ticker and pre-calculate group-level stats for sorting
-        const tickerGroups = {};
-        filteredPositions.forEach(pos => {
-            const ticker = getTicker(pos);
-            if (!tickerGroups[ticker]) {
-                tickerGroups[ticker] = {
-                    positions: [],
-                    totalPnL: 0,
-                    minDaysToExpiry: Infinity,
-                    totalExposure: 0,
-                    costBasis: 0
-                };
-            }
-            const group = tickerGroups[ticker];
-            group.positions.push(pos);
-            group.totalPnL += pos.unrealizedPnl;
-            group.totalExposure += calculatePositionExposure(pos);
-            group.costBasis += Math.abs(pos.position * pos.avgCost);
-            
-            const days = getDaysToExpiry(pos);
-            if (days !== null && days < group.minDaysToExpiry) {
-                group.minDaysToExpiry = days;
-            }
-        });
-
-        // 2. Sort tickers based on selected option
-        const sortedTickers = Object.keys(tickerGroups).sort((a, b) => {
-            const groupA = tickerGroups[a];
-            const groupB = tickerGroups[b];
-            
-            switch (currentSort) {
-                case 'expires':
-                    const expiryA = groupA.minDaysToExpiry === Infinity ? 99999 : groupA.minDaysToExpiry;
-                    const expiryB = groupB.minDaysToExpiry === Infinity ? 99999 : groupB.minDaysToExpiry;
-                    return expiryA - expiryB;
-                case 'pnl':
-                    return groupA.totalPnL - groupB.totalPnL;
-                case 'exposure':
-                    return groupB.totalExposure - groupA.totalExposure;
-                case 'ticker':
-                default:
-                    return a.localeCompare(b);
-            }
-        });
-
-        // 3. Group sorted tickers by tag
-        const tagGroups = {};
-        sortedTickers.forEach(ticker => {
-            const tag = currentTags[ticker] || '';
-            if (!tagGroups[tag]) tagGroups[tag] = [];
-            tagGroups[tag].push(ticker);
-        });
-
-        // 4. Sort tags: empty first, then alphabetically
-        const sortedTags = Object.keys(tagGroups).sort((a, b) => {
-            if (a === '') return -1;
-            if (b === '') return 1;
-            return a.localeCompare(b);
-        });
-
         let html = `
             <table>
                 <thead>
@@ -519,92 +485,185 @@ header('Content-Type: text/html; charset=utf-8');
                 <tbody>
         `;
 
-        sortedTags.forEach((tag, tagIndex) => {
-            // Add spacing between tag groups
-            if (tagIndex > 0) {
-                html += '<tr class="tag-spacer"><td colspan="8"></td></tr>';
-            }
-
-            const tickersInTag = tagGroups[tag]; // Already sorted by our criteria in step 2
-            tickersInTag.forEach(ticker => {
-                const groupData = tickerGroups[ticker];
-                const group = groupData.positions;
+        if (currentGroupByTicker) {
+            // 1. Group by ticker and pre-calculate group-level stats for sorting
+            const tickerGroups = {};
+            filteredPositions.forEach(pos => {
+                const ticker = getTicker(pos);
+                if (!tickerGroups[ticker]) {
+                    tickerGroups[ticker] = {
+                        positions: [],
+                        totalPnL: 0,
+                        minDaysToExpiry: Infinity,
+                        totalExposure: 0,
+                        costBasis: 0
+                    };
+                }
+                const group = tickerGroups[ticker];
+                group.positions.push(pos);
+                group.totalPnL += pos.unrealizedPnl;
+                group.totalExposure += calculatePositionExposure(pos);
+                group.costBasis += Math.abs(pos.position * pos.avgCost);
                 
-                group.forEach((pos, index) => {
-                    const posExposure = calculatePositionExposure(pos);
-                    const costBasis = Math.abs(pos.position * pos.avgCost);
-                    const daysToExpiry = getDaysToExpiry(pos);
+                const days = getDaysToExpiry(pos);
+                if (days !== null && days < group.minDaysToExpiry) {
+                    group.minDaysToExpiry = days;
+                }
+            });
 
-                    const pnlPercent = costBasis !== 0 ? (pos.unrealizedPnl / costBasis) * 100 : 0;
-                    const pnlClass = pos.unrealizedPnl >= 0 ? 'pnl-positive' : 'pnl-negative';
+            // 2. Sort tickers based on selected option
+            const sortedTickers = Object.keys(tickerGroups).sort((a, b) => {
+                const groupA = tickerGroups[a];
+                const groupB = tickerGroups[b];
+                
+                switch (currentSort) {
+                    case 'expires':
+                        const expiryA = groupA.minDaysToExpiry === Infinity ? 99999 : groupA.minDaysToExpiry;
+                        const expiryB = groupB.minDaysToExpiry === Infinity ? 99999 : groupB.minDaysToExpiry;
+                        return expiryA - expiryB;
+                    case 'pnl':
+                        return groupA.totalPnL - groupB.totalPnL;
+                    case 'exposure':
+                        return groupB.totalExposure - groupA.totalExposure;
+                    case 'ticker':
+                    default:
+                        return a.localeCompare(b);
+                }
+            });
 
-                    let liability = 0;
-                    if (pos.assetClass === 'OPT' && pos.position < 0) {
-                        const desc = pos.contractDesc.split('[')[0].trim();
-                        const parts = desc.split(/\s+/);
-                        if (parts.length >= 4) {
-                            const strike = parseFloat(parts[parts.length - 2]);
-                            const isPut = parts[parts.length - 1] === 'P';
-                            if (isPut && !isNaN(strike)) {
-                                liability = Math.abs(pos.position * strike * 100);
-                            }
-                        }
-                    }
+            // 3. Group sorted tickers by tag
+            const tagGroups = {};
+            sortedTickers.forEach(ticker => {
+                const tag = currentTags[ticker] || '';
+                if (!tagGroups[tag]) tagGroups[tag] = [];
+                tagGroups[tag].push(ticker);
+            });
+
+            // 4. Sort tags: empty first, then alphabetically
+            const sortedTags = Object.keys(tagGroups).sort((a, b) => {
+                if (a === '') return -1;
+                if (b === '') return 1;
+                return a.localeCompare(b);
+            });
+
+            sortedTags.forEach((tag, tagIndex) => {
+                if (tagIndex > 0) html += '<tr class="tag-spacer"><td colspan="8"></td></tr>';
+
+                const tickersInTag = tagGroups[tag];
+                tickersInTag.forEach(ticker => {
+                    const groupData = tickerGroups[ticker];
+                    const group = groupData.positions;
+                    
+                    group.forEach((pos, index) => {
+                        html += renderPositionRow(pos, ticker, index === 0);
+                    });
+
+                    const groupPnL = groupData.totalPnL;
+                    const groupExposure = groupData.totalExposure;
+                    const groupPnlClass = groupPnL >= 0 ? 'pnl-positive' : 'pnl-negative';
 
                     html += `
-                        <tr>
-                            <td>
-                                ${index === 0 ? `<strong class="ticker-name" onclick="editTag('${ticker}')">${ticker}</strong>` : ''}
-                                ${index === 0 && currentTags[ticker] ? `<span class="tag-badge">${currentTags[ticker]}</span>` : ''}
+                        <tr class="summary-row">
+                            <td colspan="8" class="summary-cell">
+                                <div class="summary-content">
+                                    <div>Total PnL: <span class="${groupPnlClass}">${formatCurrency(groupPnL)}</span></div>
+                                    <div class="pos-value">Exposure: ${formatCurrency(groupExposure)}</div>
+                                    <div style="font-size: 0.75rem; color: #666;">
+                                        ${currentNLV ? formatPercent((groupExposure / currentNLV) * 100) : '0.00%'} of NLV
+                                    </div>
+                                </div>
                             </td>
-                            <td>
-                                ${pos.position} 
-                                <small style="color: #888;">${pos.assetClass === 'OPT' ? '(OPT)' : ''}</small>
-                                <div style="font-size: 0.75rem; color: #999;">${pos.contractDesc}</div>
-                            </td>
-                            <td>${daysToExpiry !== null ? daysToExpiry + 'd' : '-'}</td>
-                            <td>${pos.avgPrice.toFixed(2)}</td>
-                            <td>${pos.mktPrice.toFixed(2)}</td>
-                            <td>${formatCurrency(pos.mktValue)}</td>
-                            <td class="${pnlClass}">
-                                <div>${formatCurrency(pos.unrealizedPnl)}</div>
-                                <div style="font-size: 0.75rem;">${formatPercent(pnlPercent)}</div>
-                            </td>
-                            <td>${liability > 0 ? formatCurrency(liability) : '-'}</td>
                         </tr>
                     `;
                 });
-
-                const groupPnL = groupData.totalPnL;
-                const groupExposure = groupData.totalExposure;
-                const groupPnlClass = groupPnL >= 0 ? 'pnl-positive' : 'pnl-negative';
-
-                html += `
-                    <tr class="summary-row">
-                        <td colspan="8" class="summary-cell">
-                            <div class="summary-content">
-                                <div>
-                                    Total PnL: <span class="${groupPnlClass}">${formatCurrency(groupPnL)}</span>
-                                </div>
-                                <div class="pos-value">
-                                    Exposure: ${formatCurrency(groupExposure)}
-                                </div>
-                                <div style="font-size: 0.75rem; color: #666;">
-                                    ${currentNLV ? formatPercent((groupExposure / currentNLV) * 100) : '0.00%'} of NLV
-                                </div>
-                            </div>
-                        </td>
-                    </tr>
-                `;
             });
-        });
+        } else {
+            // Flat list logic
+            const sortedPositions = [...filteredPositions].sort((a, b) => {
+                const tickerA = getTicker(a);
+                const tickerB = getTicker(b);
+                switch (currentSort) {
+                    case 'expires':
+                        const daysA = getDaysToExpiry(a) ?? 99999;
+                        const daysB = getDaysToExpiry(b) ?? 99999;
+                        return daysA - daysB;
+                    case 'pnl':
+                        return a.unrealizedPnl - b.unrealizedPnl;
+                    case 'exposure':
+                        return calculatePositionExposure(b) - calculatePositionExposure(a);
+                    case 'ticker':
+                    default:
+                        return tickerA.localeCompare(tickerB);
+                }
+            });
 
-        html += `
-                </tbody>
-            </table>
-        `;
+            const tagGroups = {};
+            sortedPositions.forEach(pos => {
+                const ticker = getTicker(pos);
+                const tag = currentTags[ticker] || '';
+                if (!tagGroups[tag]) tagGroups[tag] = [];
+                tagGroups[tag].push(pos);
+            });
 
+            const sortedTags = Object.keys(tagGroups).sort((a, b) => {
+                if (a === '') return -1;
+                if (b === '') return 1;
+                return a.localeCompare(b);
+            });
+
+            sortedTags.forEach((tag, tagIndex) => {
+                if (tagIndex > 0) html += '<tr class="tag-spacer"><td colspan="8"></td></tr>';
+                tagGroups[tag].forEach(pos => {
+                    html += renderPositionRow(pos, getTicker(pos), true);
+                });
+            });
+        }
+
+        html += `</tbody></table>`;
         document.getElementById('table-container').innerHTML = html;
+    }
+
+    function renderPositionRow(pos, ticker, showTicker) {
+        const costBasis = Math.abs(pos.position * pos.avgCost);
+        const daysToExpiry = getDaysToExpiry(pos);
+        const pnlPercent = costBasis !== 0 ? (pos.unrealizedPnl / costBasis) * 100 : 0;
+        const pnlClass = pos.unrealizedPnl >= 0 ? 'pnl-positive' : 'pnl-negative';
+
+        let liability = 0;
+        if (pos.assetClass === 'OPT' && pos.position < 0) {
+            const desc = pos.contractDesc.split('[')[0].trim();
+            const parts = desc.split(/\s+/);
+            if (parts.length >= 4) {
+                const strike = parseFloat(parts[parts.length - 2]);
+                const isPut = parts[parts.length - 1] === 'P';
+                if (isPut && !isNaN(strike)) {
+                    liability = Math.abs(pos.position * strike * 100);
+                }
+            }
+        }
+
+        return `
+            <tr>
+                <td>
+                    ${showTicker ? `<strong class="ticker-name" onclick="editTag('${ticker}')">${ticker}</strong>` : ''}
+                    ${showTicker && currentTags[ticker] ? `<span class="tag-badge">${currentTags[ticker]}</span>` : ''}
+                </td>
+                <td>
+                    ${pos.position} 
+                    <small style="color: #888;">${pos.assetClass === 'OPT' ? '(OPT)' : ''}</small>
+                    <div style="font-size: 0.75rem; color: #999;">${pos.contractDesc}</div>
+                </td>
+                <td>${daysToExpiry !== null ? daysToExpiry + 'd' : '-'}</td>
+                <td>${pos.avgPrice.toFixed(2)}</td>
+                <td>${pos.mktPrice.toFixed(2)}</td>
+                <td>${formatCurrency(pos.mktValue)}</td>
+                <td class="${pnlClass}">
+                    <div>${formatCurrency(pos.unrealizedPnl)}</div>
+                    <div style="font-size: 0.75rem;">${formatPercent(pnlPercent)}</div>
+                </td>
+                <td>${liability > 0 ? formatCurrency(liability) : '-'}</td>
+            </tr>
+        `;
     }
 
     // Initial fetch
