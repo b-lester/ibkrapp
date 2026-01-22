@@ -339,11 +339,15 @@ header('Content-Type: text/html; charset=utf-8');
         }
 
         let totalExposure = 0;
+        let stocksExposure = 0;
         if (positions) {
             positions.forEach(pos => {
                 const ticker = getTicker(pos);
                 const tag = currentTags[ticker] || '';
                 if (tag !== 'safe') {
+                    if (pos.assetClass === 'STK') {
+                        stocksExposure += pos.mktValue;
+                    }
                     totalExposure += calculatePositionExposure(pos);
                 }
             });
@@ -356,6 +360,7 @@ header('Content-Type: text/html; charset=utf-8');
                         <th>Net Liquidation</th>
                         <th>Positions Value</th>
                         <th>Cash Balance</th>
+                        <th>Stocks Exposure</th>
                         <th>Total Exposure</th>
                     </tr>
                 </thead>
@@ -364,6 +369,12 @@ header('Content-Type: text/html; charset=utf-8');
                         <td><strong>${formatCurrency(netLiquidation)}</strong></td>
                         <td><strong>${formatCurrency(positionsValue)}</strong></td>
                         <td>${formatCurrency(cashBalance)}</td>
+                        <td>
+                            <strong>${formatCurrency(stocksExposure)}</strong>
+                            <div style="font-size: 0.8rem; color: #666;">
+                                ${netLiquidation ? formatPercent((stocksExposure / netLiquidation) * 100) : '0.00%'} of NLV
+                            </div>
+                        </td>
                         <td>
                             <strong>${formatCurrency(totalExposure)}</strong>
                             <div style="font-size: 0.8rem; color: #666;">
