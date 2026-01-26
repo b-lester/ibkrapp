@@ -165,6 +165,16 @@ header('Content-Type: text/html; charset=utf-8');
             color: #0288d1;
             text-decoration-color: #0288d1;
         }
+        .open-date {
+            cursor: pointer;
+            color: #666;
+            text-decoration: underline dotted #ccc;
+            font-size: 0.75rem;
+        }
+        .open-date:hover {
+            color: #0288d1;
+            text-decoration-color: #0288d1;
+        }
     </style>
 </head>
 <body>
@@ -214,6 +224,7 @@ header('Content-Type: text/html; charset=utf-8');
 
 <script>
     let currentTags = {};
+    let currentOpenDates = {};
     let currentNLV = 0;
     let currentSort = 'ticker';
     let currentFilter = 'all';
@@ -222,22 +233,25 @@ header('Content-Type: text/html; charset=utf-8');
 
     async function fetchPositions() {
         try {
-            const [posRes, cashRes, tagsRes, prefsRes] = await Promise.all([
+            const [posRes, cashRes, tagsRes, prefsRes, openDatesRes] = await Promise.all([
                 fetch('list_positions.php'),
                 fetch('list_cash.php'),
                 fetch('tags.php'),
-                fetch('preferences.php')
+                fetch('preferences.php'),
+                fetch('open_dates.php')
             ]);
 
             if (!posRes.ok) throw new Error(`Positions fetch failed: ${posRes.status}`);
             if (!cashRes.ok) throw new Error(`Cash fetch failed: ${cashRes.status}`);
             if (!tagsRes.ok) throw new Error(`Tags fetch failed: ${tagsRes.status}`);
             if (!prefsRes.ok) throw new Error(`Preferences fetch failed: ${prefsRes.status}`);
+            if (!openDatesRes.ok) throw new Error(`Open dates fetch failed: ${openDatesRes.status}`);
 
             const posData = await posRes.json();
             const cashData = await cashRes.json();
             currentTags = await tagsRes.json();
             const prefs = await prefsRes.json();
+            currentOpenDates = await openDatesRes.json();
 
             if (prefs.sort) {
                 currentSort = prefs.sort;
@@ -412,6 +426,23 @@ header('Content-Type: text/html; charset=utf-8');
         }
     }
 
+    async function saveOpenDate(conid, open_date) {
+        try {
+            const res = await fetch('open_dates.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ conid, open_date })
+            });
+            if (res.ok) {
+                const data = await res.json();
+                currentOpenDates = data.open_dates;
+                renderPositions(lastPositionsData); // Just re-render
+            }
+        } catch (error) {
+            console.error('Save open date error:', error);
+        }
+    }
+
     async function updateSort(sortValue) {
         currentSort = sortValue;
         renderPositions(lastPositionsData);
@@ -462,6 +493,23 @@ header('Content-Type: text/html; charset=utf-8');
         }
     }
 
+    function editOpenDate(conid, ticker) {
+        const oldDate = currentOpenDates[conid] || '';
+        let newDate = prompt(`Enter open date for ${ticker} (YYYY-MM-DD):`, oldDate);
+        
+        if (newDate === null) return; // User cancelled
+        
+        newDate = newDate.trim();
+        if (newDate !== '' && !/^\d{4}-\d{2}-\d{2}$/.test(newDate)) {
+            alert('Invalid date format. Please use YYYY-MM-DD.');
+            return;
+        }
+
+        if (newDate !== oldDate) {
+            saveOpenDate(conid, newDate);
+        }
+    }
+
     function renderPositions(positions) {
         if (!positions || positions.length === 0) {
             document.getElementById('table-container').innerHTML = '<div class="loading">No positions found.</div>';
@@ -485,6 +533,7 @@ header('Content-Type: text/html; charset=utf-8');
                     <tr>
                         <th>Ticker</th>
                         <th>Position</th>
+                        <th>Open Date</th>
                         <th>Expires</th>
                         <th>Avg</th>
                         <th>Last</th>
@@ -558,7 +607,7 @@ header('Content-Type: text/html; charset=utf-8');
             });
 
             sortedTags.forEach((tag, tagIndex) => {
-                if (tagIndex > 0) html += '<tr class="tag-spacer"><td colspan="8"></td></tr>';
+                if (tagIndex > 0) html += '<tr class="tag-spacer"><td colspan="9"></td></tr>';
 
                 const tickersInTag = tagGroups[tag];
                 tickersInTag.forEach(ticker => {
@@ -575,7 +624,7 @@ header('Content-Type: text/html; charset=utf-8');
 
                     html += `
                         <tr class="summary-row">
-                            <td colspan="8" class="summary-cell">
+                            <td colspan="9" class="summary-cell">
                                 <div class="summary-content">
                                     <div>Total PnL: <span class="${groupPnlClass}">${formatCurrency(groupPnL)}</span></div>
                                     <div class="pos-value">Exposure: ${formatCurrency(groupExposure)}</div>
@@ -623,7 +672,7 @@ header('Content-Type: text/html; charset=utf-8');
             });
 
             sortedTags.forEach((tag, tagIndex) => {
-                if (tagIndex > 0) html += '<tr class="tag-spacer"><td colspan="8"></td></tr>';
+                if (tagIndex > 0) html += '<tr class="tag-spacer"><td colspan="9"></td></tr>';
                 tagGroups[tag].forEach(pos => {
                     html += renderPositionRow(pos, getTicker(pos), true);
                 });
@@ -639,6 +688,7 @@ header('Content-Type: text/html; charset=utf-8');
         const daysToExpiry = getDaysToExpiry(pos);
         const pnlPercent = costBasis !== 0 ? (pos.unrealizedPnl / costBasis) * 100 : 0;
         const pnlClass = pos.unrealizedPnl >= 0 ? 'pnl-positive' : 'pnl-negative';
+        const openDate = currentOpenDates[pos.conid] || '-';
 
         let liability = 0;
         if (pos.assetClass === 'OPT' && pos.position < 0) {
@@ -663,6 +713,9 @@ header('Content-Type: text/html; charset=utf-8');
                     ${pos.position} 
                     <small style="color: #888;">${pos.assetClass === 'OPT' ? '(OPT)' : ''}</small>
                     <div style="font-size: 0.75rem; color: #999;">${pos.contractDesc}</div>
+                </td>
+                <td>
+                    <span class="open-date" onclick="editOpenDate('${pos.conid}', '${ticker}')">${openDate}</span>
                 </td>
                 <td>${daysToExpiry !== null ? daysToExpiry + 'd' : '-'}</td>
                 <td>${pos.avgPrice.toFixed(2)}</td>

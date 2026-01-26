@@ -2,7 +2,9 @@
 declare(strict_types=1);
 
 /**
- * IBKR Client Portal Gateway: List cash balances for all accounts
+ * IBKR Client Portal Gateway: List trades as JSON
+ *
+ * Documentation: https://www.interactivebrokers.com/campus/ibkr-api-page/cpapi-v1/#trades
  */
 
 header('Content-Type: application/json; charset=utf-8');
@@ -75,26 +77,25 @@ try {
     // 2) Accounts
     $acct = curl_json('GET', "{$BASE}/iserver/accounts", $INSECURE_TLS, $cookieJar);
     $accounts = $acct['accounts'] ?? [];
+    $selectedAccount = $acct['selectedAccount'] ?? ($accounts[0] ?? null);
 
-    if (empty($accounts)) {
-        throw new RuntimeException("No accounts returned: " . json_encode($acct));
+    if (!$selectedAccount) {
+        throw new RuntimeException("No accounts found or selected.");
     }
 
-    $results = [];
+    // 3) Fetch trades
+    $days = isset($_GET['days']) ? (int)$_GET['days'] : 1;
+    if ($days < 1) $days = 1;
+    if ($days > 7) $days = 7;
 
-    // 3) Cash balances for each account
-    foreach ($accounts as $accountId) {
-        $accountId = (string)$accountId;
-        $ledger = curl_json('GET', "{$BASE}/portfolio/{$accountId}/ledger", $INSECURE_TLS, $cookieJar);
-        
-        // The ledger response typically contains currency-specific entries.
-        // We'll look for "BASE" or aggregate if needed, but usually users want the base currency cash.
-        // IBKR returns 'BASE' as a key in the ledger object.
-        $results[$accountId] = $ledger;
-    }
+    $tradesUrl = "{$BASE}/iserver/account/trades?days={$days}";
+    $trades = curl_json('GET', $tradesUrl, $INSECURE_TLS, $cookieJar);
 
     echo json_encode([
-        'accounts' => $results,
+        'account' => $selectedAccount,
+        'days' => $days,
+        'count' => count($trades),
+        'trades' => $trades,
     ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
 
 } catch (Exception $e) {

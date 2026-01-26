@@ -15,6 +15,9 @@ declare(strict_types=1);
  */
 
 header('Content-Type: application/json; charset=utf-8');
+header('Cache-Control: no-store, no-cache, must-revalidate, max-age=0');
+header('Cache-Control: post-check=0, pre-check=0', false);
+header('Pragma: no-cache');
 
 $GATEWAY_HOST = 'host.docker.internal';
 $GATEWAY_PORT = 5050;                  // <-- CHANGE THIS to your gateway port
