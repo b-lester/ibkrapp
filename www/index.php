@@ -715,21 +715,32 @@ header('Content-Type: text/html; charset=utf-8');
     function renderPositionRow(pos, ticker, showTicker) {
         const costBasis = Math.abs(pos.position * pos.avgCost);
         const daysToExpiry = getDaysToExpiry(pos);
-        const pnlPercent = costBasis !== 0 ? (pos.unrealizedPnl / costBasis) * 100 : 0;
         const pnlClass = pos.unrealizedPnl >= 0 ? 'pnl-positive' : 'pnl-negative';
         const openDate = currentOpenDates[pos.conid] || '-';
 
         let liability = 0;
-        if (pos.assetClass === 'OPT' && pos.position < 0) {
+        let strikeBasis = 0;
+        if (pos.assetClass === 'OPT') {
             const desc = pos.contractDesc.split('[')[0].trim();
             const parts = desc.split(/\s+/);
             if (parts.length >= 4) {
                 const strike = parseFloat(parts[parts.length - 2]);
                 const isPut = parts[parts.length - 1] === 'P';
-                if (isPut && !isNaN(strike)) {
-                    liability = Math.abs(pos.position * strike * 100);
+                if (!isNaN(strike)) {
+                    strikeBasis = Math.abs(pos.position * strike * 100);
+                    // The "Liability" column still only displays for short Puts
+                    if (pos.position < 0 && isPut) {
+                        liability = strikeBasis;
+                    }
                 }
             }
+        }
+
+        let pnlPercent = 0;
+        if (pos.assetClass === 'OPT' && strikeBasis > 0) {
+            pnlPercent = (pos.unrealizedPnl / strikeBasis) * 100;
+        } else if (costBasis !== 0) {
+            pnlPercent = (pos.unrealizedPnl / costBasis) * 100;
         }
 
         return `
