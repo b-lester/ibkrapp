@@ -233,12 +233,13 @@ header('Content-Type: text/html; charset=utf-8');
 
     async function fetchPositions() {
         try {
-            const [posRes, cashRes, tagsRes, prefsRes, openDatesRes] = await Promise.all([
+            const [posRes, cashRes, tagsRes, prefsRes, openDatesRes, tradesRes] = await Promise.all([
                 fetch('list_positions.php'),
                 fetch('list_cash.php'),
                 fetch('tags.php'),
                 fetch('preferences.php'),
-                fetch('open_dates.php')
+                fetch('open_dates.php'),
+                fetch('list_trades.php?days=7')
             ]);
 
             if (!posRes.ok) throw new Error(`Positions fetch failed: ${posRes.status}`);
@@ -246,12 +247,14 @@ header('Content-Type: text/html; charset=utf-8');
             if (!tagsRes.ok) throw new Error(`Tags fetch failed: ${tagsRes.status}`);
             if (!prefsRes.ok) throw new Error(`Preferences fetch failed: ${prefsRes.status}`);
             if (!openDatesRes.ok) throw new Error(`Open dates fetch failed: ${openDatesRes.status}`);
+            if (!tradesRes.ok) throw new Error(`Trades fetch failed: ${tradesRes.status}`);
 
             const posData = await posRes.json();
             const cashData = await cashRes.json();
             currentTags = await tagsRes.json();
             const prefs = await prefsRes.json();
             currentOpenDates = await openDatesRes.json();
+            const tradesData = await tradesRes.json();
 
             if (prefs.sort) {
                 currentSort = prefs.sort;
@@ -267,6 +270,30 @@ header('Content-Type: text/html; charset=utf-8');
             } else {
                 // Default to checked
                 document.getElementById('group-ticker-toggle').checked = true;
+            }
+
+            // Auto-fill open dates from trades if missing
+            let openDatesChanged = false;
+            if (posData.positions && tradesData.trades) {
+                for (const pos of posData.positions) {
+                    if (!currentOpenDates[pos.conid]) {
+                        // Find most recent trade for this conid
+                        // Trades are typically returned in reverse chronological order or we can just find any
+                        const match = tradesData.trades.find(t => String(t.conid) === String(pos.conid));
+                        if (match) {
+                            // trade_time: "20260126-17:24:42" -> "2026-01-26"
+                            const rawDate = match.trade_time.split('-')[0];
+                            const formattedDate = `${rawDate.substring(0, 4)}-${rawDate.substring(4, 6)}-${rawDate.substring(6, 8)}`;
+                            
+                            // Save it locally first
+                            currentOpenDates[pos.conid] = formattedDate;
+                            
+                            // Save to backend (async, don't wait for each)
+                            saveOpenDate(pos.conid, formattedDate, false); // Pass false to skip re-render for each
+                            openDatesChanged = true;
+                        }
+                    }
+                }
             }
 
             lastPositionsData = posData.positions;
@@ -426,7 +453,7 @@ header('Content-Type: text/html; charset=utf-8');
         }
     }
 
-    async function saveOpenDate(conid, open_date) {
+    async function saveOpenDate(conid, open_date, triggerRender = true) {
         try {
             const res = await fetch('open_dates.php', {
                 method: 'POST',
@@ -436,7 +463,9 @@ header('Content-Type: text/html; charset=utf-8');
             if (res.ok) {
                 const data = await res.json();
                 currentOpenDates = data.open_dates;
-                renderPositions(lastPositionsData); // Just re-render
+                if (triggerRender) {
+                    renderPositions(lastPositionsData); // Just re-render
+                }
             }
         } catch (error) {
             console.error('Save open date error:', error);
