@@ -2,7 +2,7 @@
 declare(strict_types=1);
 
 /**
- * Manage ticker tags in tags.json
+ * Manage ticker tags in tags.json with file locking to prevent race conditions.
  */
 
 header('Content-Type: application/json; charset=utf-8');
@@ -33,15 +33,42 @@ if ($method === 'POST') {
     $ticker = strtoupper(trim($input['ticker']));
     $tag = trim($input['tag']);
 
-    $tags = json_decode(file_get_contents($tagsFile), true);
-    
-    if ($tag === '') {
-        unset($tags[$ticker]);
-    } else {
-        $tags[$ticker] = $tag;
+    // Use file locking for atomic updates
+    $fp = fopen($tagsFile, 'c+');
+    if (!$fp) {
+        http_response_code(500);
+        echo json_encode(['error' => 'Could not open data file']);
+        exit;
     }
 
-    file_put_contents($tagsFile, json_encode($tags, JSON_PRETTY_PRINT));
+    if (flock($fp, LOCK_EX)) {
+        $filesize = filesize($tagsFile);
+        $content = $filesize > 0 ? fread($fp, $filesize) : '{}';
+        $tags = json_decode($content, true);
+        
+        if ($tags === null && json_last_error() !== JSON_ERROR_NONE) {
+            $tags = [];
+        }
+
+        if ($tag === '') {
+            unset($tags[$ticker]);
+        } else {
+            $tags[$ticker] = $tag;
+        }
+
+        ftruncate($fp, 0);
+        rewind($fp);
+        fwrite($fp, json_encode($tags, JSON_PRETTY_PRINT));
+        fflush($fp);
+        flock($fp, LOCK_UN);
+    } else {
+        http_response_code(500);
+        echo json_encode(['error' => 'Could not lock data file']);
+        fclose($fp);
+        exit;
+    }
+    fclose($fp);
+
     echo json_encode(['success' => true, 'tags' => $tags]);
     exit;
 }
