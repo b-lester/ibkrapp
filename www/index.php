@@ -562,11 +562,11 @@ header('Content-Type: text/html; charset=utf-8');
                     <tr>
                         <th>Ticker</th>
                         <th>Position</th>
-                        <th>Open Date</th>
-                        <th>Age</th>
-                        <th>Target Return</th>
-                        <th>ROC</th>
                         <th>Expires</th>
+                        <th>Opened</th>
+                        <th>Age</th>
+                        <th>Tgt</th>
+                        <th>ROC</th>
                         <th>Avg</th>
                         <th>Last</th>
                         <th>Value</th>
@@ -736,23 +736,28 @@ header('Content-Type: text/html; charset=utf-8');
         let liability = 0;
         let strikeBasis = 0;
         let roc = null;
+        let posSubInfo = '';
         if (pos.assetClass === 'OPT') {
             const desc = pos.contractDesc.split('[')[0].trim();
             const parts = desc.split(/\s+/);
             if (parts.length >= 4) {
-                const strike = parseFloat(parts[parts.length - 2]);
-                const isPut = parts[parts.length - 1] === 'P';
-                if (!isNaN(strike)) {
-                    strikeBasis = Math.abs(pos.position * strike * 100);
+                const expiry = parts[parts.length - 3];
+                const strike = parts[parts.length - 2];
+                const type = parts[parts.length - 1];
+                posSubInfo = `<div style="font-size: 0.7rem; color: #888; margin-top: 2px;">${strike}${type} ${expiry}</div>`;
+
+                const strikeVal = parseFloat(strike);
+                const isPut = type === 'P';
+                if (!isNaN(strikeVal)) {
+                    strikeBasis = Math.abs(pos.position * strikeVal * 100);
                     // The "Liability" column still only displays for short Puts
                     if (pos.position < 0 && isPut) {
                         liability = strikeBasis;
                     }
                     
                     // Calculate ROC: (Premium Collected / Capital at Risk)
-                    // Simplified: avgPrice / strike
-                    if (strike > 0) {
-                        roc = (pos.avgPrice / strike) * 100;
+                    if (strikeVal > 0) {
+                        roc = (pos.avgPrice / strikeVal) * 100;
                     }
                 }
             }
@@ -772,17 +777,16 @@ header('Content-Type: text/html; charset=utf-8');
                     ${showTicker && currentTags[ticker] ? `<span class="tag-badge">${currentTags[ticker]}</span>` : ''}
                 </td>
                 <td>
-                    ${pos.position} 
-                    <small style="color: #888;">${pos.assetClass === 'OPT' ? '(OPT)' : ''}</small>
-                    <div style="font-size: 0.75rem; color: #999;">${pos.contractDesc}</div>
+                    <strong>${pos.position}</strong>
+                    ${posSubInfo}
                 </td>
+                <td>${daysToExpiry !== null ? daysToExpiry + 'd' : '-'}</td>
                 <td>
                     <span class="open-date" onclick="editOpenDate('${pos.conid}', '${ticker}')">${openDateDisplay}</span>
                 </td>
                 <td>${ageDays !== null ? ageDays + 'd' : '-'}</td>
                 <td>${targetReturn !== null ? formatPercent(targetReturn) : '-'}</td>
                 <td>${roc !== null ? formatPercent(roc) : '-'}</td>
-                <td>${daysToExpiry !== null ? daysToExpiry + 'd' : '-'}</td>
                 <td>${pos.avgPrice.toFixed(2)}</td>
                 <td>${pos.mktPrice.toFixed(2)}</td>
                 <td>${formatCurrency(pos.mktValue)}</td>
