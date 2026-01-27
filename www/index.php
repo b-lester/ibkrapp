@@ -563,6 +563,7 @@ header('Content-Type: text/html; charset=utf-8');
                         <th>Ticker</th>
                         <th>Position</th>
                         <th>Open Date</th>
+                        <th>ROC</th>
                         <th>Expires</th>
                         <th>Avg</th>
                         <th>Last</th>
@@ -636,7 +637,7 @@ header('Content-Type: text/html; charset=utf-8');
             });
 
             sortedTags.forEach((tag, tagIndex) => {
-                if (tagIndex > 0) html += '<tr class="tag-spacer"><td colspan="9"></td></tr>';
+                if (tagIndex > 0) html += '<tr class="tag-spacer"><td colspan="10"></td></tr>';
 
                 const tickersInTag = tagGroups[tag];
                 tickersInTag.forEach(ticker => {
@@ -653,7 +654,7 @@ header('Content-Type: text/html; charset=utf-8');
 
                     html += `
                         <tr class="summary-row">
-                            <td colspan="9" class="summary-cell">
+                            <td colspan="10" class="summary-cell">
                                 <div class="summary-content">
                                     <div>Total PnL: <span class="${groupPnlClass}">${formatCurrency(groupPnL)}</span></div>
                                     <div class="pos-value">Exposure: ${formatCurrency(groupExposure)}</div>
@@ -701,7 +702,7 @@ header('Content-Type: text/html; charset=utf-8');
             });
 
             sortedTags.forEach((tag, tagIndex) => {
-                if (tagIndex > 0) html += '<tr class="tag-spacer"><td colspan="9"></td></tr>';
+                if (tagIndex > 0) html += '<tr class="tag-spacer"><td colspan="10"></td></tr>';
                 tagGroups[tag].forEach(pos => {
                     html += renderPositionRow(pos, getTicker(pos), true);
                 });
@@ -720,6 +721,7 @@ header('Content-Type: text/html; charset=utf-8');
 
         let liability = 0;
         let strikeBasis = 0;
+        let roc = null;
         if (pos.assetClass === 'OPT') {
             const desc = pos.contractDesc.split('[')[0].trim();
             const parts = desc.split(/\s+/);
@@ -731,6 +733,12 @@ header('Content-Type: text/html; charset=utf-8');
                     // The "Liability" column still only displays for short Puts
                     if (pos.position < 0 && isPut) {
                         liability = strikeBasis;
+                    }
+                    
+                    // Calculate ROC: (Premium Collected / Capital at Risk)
+                    // Simplified: avgPrice / strike
+                    if (strike > 0) {
+                        roc = (pos.avgPrice / strike) * 100;
                     }
                 }
             }
@@ -757,6 +765,7 @@ header('Content-Type: text/html; charset=utf-8');
                 <td>
                     <span class="open-date" onclick="editOpenDate('${pos.conid}', '${ticker}')">${openDate}</span>
                 </td>
+                <td>${roc !== null ? formatPercent(roc) : '-'}</td>
                 <td>${daysToExpiry !== null ? daysToExpiry + 'd' : '-'}</td>
                 <td>${pos.avgPrice.toFixed(2)}</td>
                 <td>${pos.mktPrice.toFixed(2)}</td>
