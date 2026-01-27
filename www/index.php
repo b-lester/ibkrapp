@@ -563,6 +563,8 @@ header('Content-Type: text/html; charset=utf-8');
                         <th>Ticker</th>
                         <th>Position</th>
                         <th>Open Date</th>
+                        <th>Age</th>
+                        <th>Target Return</th>
                         <th>ROC</th>
                         <th>Expires</th>
                         <th>Avg</th>
@@ -637,7 +639,7 @@ header('Content-Type: text/html; charset=utf-8');
             });
 
             sortedTags.forEach((tag, tagIndex) => {
-                if (tagIndex > 0) html += '<tr class="tag-spacer"><td colspan="10"></td></tr>';
+                if (tagIndex > 0) html += '<tr class="tag-spacer"><td colspan="12"></td></tr>';
 
                 const tickersInTag = tagGroups[tag];
                 tickersInTag.forEach(ticker => {
@@ -654,7 +656,7 @@ header('Content-Type: text/html; charset=utf-8');
 
                     html += `
                         <tr class="summary-row">
-                            <td colspan="10" class="summary-cell">
+                            <td colspan="12" class="summary-cell">
                                 <div class="summary-content">
                                     <div>Total PnL: <span class="${groupPnlClass}">${formatCurrency(groupPnL)}</span></div>
                                     <div class="pos-value">Exposure: ${formatCurrency(groupExposure)}</div>
@@ -702,7 +704,7 @@ header('Content-Type: text/html; charset=utf-8');
             });
 
             sortedTags.forEach((tag, tagIndex) => {
-                if (tagIndex > 0) html += '<tr class="tag-spacer"><td colspan="10"></td></tr>';
+                if (tagIndex > 0) html += '<tr class="tag-spacer"><td colspan="12"></td></tr>';
                 tagGroups[tag].forEach(pos => {
                     html += renderPositionRow(pos, getTicker(pos), true);
                 });
@@ -717,7 +719,19 @@ header('Content-Type: text/html; charset=utf-8');
         const costBasis = Math.abs(pos.position * pos.avgCost);
         const daysToExpiry = getDaysToExpiry(pos);
         const pnlClass = pos.unrealizedPnl >= 0 ? 'pnl-positive' : 'pnl-negative';
-        const openDate = currentOpenDates[pos.conid] || '-';
+        const openDateStr = currentOpenDates[pos.conid];
+        const openDateDisplay = openDateStr || '-';
+
+        let ageDays = null;
+        let targetReturn = null;
+        if (openDateStr) {
+            const openD = new Date(openDateStr);
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            openD.setHours(0, 0, 0, 0);
+            ageDays = Math.floor((today - openD) / (1000 * 60 * 60 * 24));
+            targetReturn = requiredReturnPercent(ageDays);
+        }
 
         let liability = 0;
         let strikeBasis = 0;
@@ -763,8 +777,10 @@ header('Content-Type: text/html; charset=utf-8');
                     <div style="font-size: 0.75rem; color: #999;">${pos.contractDesc}</div>
                 </td>
                 <td>
-                    <span class="open-date" onclick="editOpenDate('${pos.conid}', '${ticker}')">${openDate}</span>
+                    <span class="open-date" onclick="editOpenDate('${pos.conid}', '${ticker}')">${openDateDisplay}</span>
                 </td>
+                <td>${ageDays !== null ? ageDays + 'd' : '-'}</td>
+                <td>${targetReturn !== null ? formatPercent(targetReturn) : '-'}</td>
                 <td>${roc !== null ? formatPercent(roc) : '-'}</td>
                 <td>${daysToExpiry !== null ? daysToExpiry + 'd' : '-'}</td>
                 <td>${pos.avgPrice.toFixed(2)}</td>
@@ -841,6 +857,12 @@ header('Content-Type: text/html; charset=utf-8');
                 authText.innerHTML = 'Connection Error (<a href="#" onclick="manualReauthenticate(); return false;">Re-authenticate</a>)';
             }
         }
+    }
+
+    function requiredReturnPercent(days, monthlyTargetPercent = 3) {
+        const monthlyFactor = 1 + (monthlyTargetPercent / 100);
+        const periodFactor = Math.pow(monthlyFactor, days / 30);
+        return (periodFactor - 1) * 100;
     }
 
     // Tickle every 30 seconds
