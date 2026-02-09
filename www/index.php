@@ -588,7 +588,9 @@ header('Content-Type: text/html; charset=utf-8');
                         totalPnL: 0,
                         minDaysToExpiry: Infinity,
                         totalExposure: 0,
-                        costBasis: 0
+                        costBasis: 0,
+                        totalShares: 0,
+                        coveredCallShares: 0
                     };
                 }
                 const group = tickerGroups[ticker];
@@ -597,6 +599,20 @@ header('Content-Type: text/html; charset=utf-8');
                 group.totalExposure += calculatePositionExposure(pos);
                 group.costBasis += Math.abs(pos.position * pos.avgCost);
                 
+                if (pos.assetClass === 'STK') {
+                    group.totalShares += pos.position;
+                } else if (pos.assetClass === 'OPT') {
+                    // Identify short calls
+                    const desc = pos.contractDesc.split('[')[0].trim();
+                    const parts = desc.split(/\s+/);
+                    if (parts.length >= 4) {
+                        const type = parts[parts.length - 1];
+                        if (type === 'C' && pos.position < 0) {
+                            group.coveredCallShares += Math.abs(pos.position * 100);
+                        }
+                    }
+                }
+
                 const days = getDaysToExpiry(pos);
                 if (days !== null && days < group.minDaysToExpiry) {
                     group.minDaysToExpiry = days;
@@ -653,11 +669,13 @@ header('Content-Type: text/html; charset=utf-8');
                     const groupPnL = groupData.totalPnL;
                     const groupExposure = groupData.totalExposure;
                     const groupPnlClass = groupPnL >= 0 ? 'pnl-positive' : 'pnl-negative';
+                    const uncoveredShares = groupData.totalShares - groupData.coveredCallShares;
 
                     html += `
                         <tr class="summary-row">
                             <td colspan="12" class="summary-cell">
                                 <div class="summary-content">
+                                    ${groupData.totalShares > 0 ? `<div>Uncovered: <strong>${uncoveredShares}</strong></div>` : ''}
                                     <div>Total PnL: <span class="${groupPnlClass}">${formatCurrency(groupPnL)}</span></div>
                                     <div class="pos-value">Exposure: ${formatCurrency(groupExposure)}</div>
                                     <div style="font-size: 0.75rem; color: #666;">
