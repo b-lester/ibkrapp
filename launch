@@ -1,8 +1,13 @@
 #!/bin/bash
+
+# kick off docker
 docker run --rm -d \
   --name ibkr-app \
   -p 8080:80 \
   --add-host=host.docker.internal:host-gateway \
   -v "$PWD":/var/www/html \
   php-apache-mysqli
+
+# kick off ibkr client portal (assumes it is living in ~/software/clientportal.gw)
+cd ~/software/clientportal.gw;bin/run.sh root/conf.yaml
 

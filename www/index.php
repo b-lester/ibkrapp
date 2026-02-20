@@ -175,6 +175,100 @@ header('Content-Type: text/html; charset=utf-8');
             color: #0288d1;
             text-decoration-color: #0288d1;
         }
+        .shares-editable {
+            cursor: pointer;
+            text-decoration: underline dotted #ccc;
+        }
+        .shares-editable:hover {
+            color: #0288d1;
+            text-decoration-color: #0288d1;
+        }
+        .lots-hint {
+            font-size: 0.68rem;
+            color: #888;
+            margin-top: 2px;
+        }
+        .lots-popover {
+            position: fixed;
+            z-index: 1000;
+            width: 420px;
+            max-width: calc(100vw - 20px);
+            background: #fff;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+            padding: 10px;
+        }
+        .lots-popover.hidden {
+            display: none;
+        }
+        .lots-title {
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+            color: #2c3e50;
+        }
+        .lots-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 0;
+        }
+        .lots-table th, .lots-table td {
+            padding: 4px;
+            border-bottom: 1px solid #f0f0f0;
+            vertical-align: middle;
+        }
+        .lots-table th {
+            background: #fafafa;
+            font-size: 0.65rem;
+        }
+        .lot-input {
+            width: 100%;
+            box-sizing: border-box;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 4px 6px;
+            font-size: 0.78rem;
+        }
+        .lot-row-remove {
+            border: none;
+            background: transparent;
+            color: #d35454;
+            cursor: pointer;
+            font-size: 0.95rem;
+            line-height: 1;
+        }
+        .lot-row-remove:hover {
+            color: #b83535;
+        }
+        .lots-actions {
+            display: flex;
+            gap: 6px;
+            justify-content: flex-end;
+            margin-top: 8px;
+        }
+        .lot-button {
+            border: 1px solid #ddd;
+            background: #fff;
+            border-radius: 4px;
+            padding: 4px 8px;
+            cursor: pointer;
+            font-size: 0.75rem;
+        }
+        .lot-button.primary {
+            border-color: #0288d1;
+            background: #0288d1;
+            color: #fff;
+        }
+        .lot-button:hover {
+            filter: brightness(0.96);
+        }
+        .lots-error {
+            color: #d35454;
+            font-size: 0.72rem;
+            margin-top: 6px;
+            min-height: 1em;
+        }
     </style>
 </head>
 <body>
@@ -221,24 +315,29 @@ header('Content-Type: text/html; charset=utf-8');
         <div class="loading">Loading positions...</div>
     </div>
 </div>
+<div id="lots-popover" class="lots-popover hidden"></div>
 
 <script>
     let currentTags = {};
     let currentOpenDates = {};
+    let currentLotsByConid = {};
     let currentNLV = 0;
     let currentSort = 'ticker';
     let currentFilter = 'all';
     let currentGroupByTicker = true;
     let lastPositionsData = [];
+    let activeLotsContext = null;
+    let lotsDraft = [];
 
     async function fetchPositions() {
         try {
-            const [posRes, cashRes, tagsRes, prefsRes, openDatesRes, tradesRes] = await Promise.all([
+            const [posRes, cashRes, tagsRes, prefsRes, openDatesRes, lotsRes, tradesRes] = await Promise.all([
                 fetch('list_positions.php'),
                 fetch('list_cash.php'),
                 fetch('tags.php'),
                 fetch('preferences.php'),
                 fetch('open_dates.php'),
+                fetch('lots.php'),
                 fetch('list_trades.php?days=7')
             ]);
 
@@ -247,6 +346,7 @@ header('Content-Type: text/html; charset=utf-8');
             if (!tagsRes.ok) throw new Error(`Tags fetch failed: ${tagsRes.status}`);
             if (!prefsRes.ok) throw new Error(`Preferences fetch failed: ${prefsRes.status}`);
             if (!openDatesRes.ok) throw new Error(`Open dates fetch failed: ${openDatesRes.status}`);
+            if (!lotsRes.ok) throw new Error(`Lots fetch failed: ${lotsRes.status}`);
             if (!tradesRes.ok) throw new Error(`Trades fetch failed: ${tradesRes.status}`);
 
             const posData = await posRes.json();
@@ -254,6 +354,8 @@ header('Content-Type: text/html; charset=utf-8');
             currentTags = await tagsRes.json();
             const prefs = await prefsRes.json();
             currentOpenDates = await openDatesRes.json();
+            const lotsData = await lotsRes.json();
+            currentLotsByConid = lotsData && typeof lotsData === 'object' ? lotsData : {};
             const tradesData = await tradesRes.json();
 
             if (prefs.sort) {
@@ -472,6 +574,29 @@ header('Content-Type: text/html; charset=utf-8');
         }
     }
 
+    async function saveLots(conid, lots, triggerRender = true) {
+        try {
+            const res = await fetch('lots.php', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ conid, lots })
+            });
+
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data.error || `Lots save failed: ${res.status}`);
+            }
+
+            currentLotsByConid = data.lots || {};
+            if (triggerRender) {
+                renderPositions(lastPositionsData);
+            }
+        } catch (error) {
+            console.error('Save lots error:', error);
+            throw error;
+        }
+    }
+
     async function updateSort(sortValue) {
         currentSort = sortValue;
         renderPositions(lastPositionsData);
@@ -537,6 +662,250 @@ header('Content-Type: text/html; charset=utf-8');
         if (newDate !== oldDate) {
             saveOpenDate(conid, newDate);
         }
+    }
+
+    function getLotsForConid(conid) {
+        return Array.isArray(currentLotsByConid[String(conid)]) ? currentLotsByConid[String(conid)] : [];
+    }
+
+    function getLotsHint(conid) {
+        const lots = getLotsForConid(conid);
+        if (lots.length === 0) return '';
+
+        const totalShares = lots.reduce((sum, lot) => sum + Number(lot.shares || 0), 0);
+        const roundedTotal = Number.isInteger(totalShares) ? totalShares : totalShares.toFixed(2);
+        const plural = lots.length === 1 ? '' : 's';
+        return `<div class="lots-hint">${lots.length} lot${plural}, ${roundedTotal} sh</div>`;
+    }
+
+    function safeDateValue(value) {
+        return value ? String(value) : '';
+    }
+
+    function createDefaultLot(positionShares, avgPrice, openDate) {
+        return {
+            shares: Number(positionShares) || 0,
+            price: Number(avgPrice) || 0,
+            date: safeDateValue(openDate)
+        };
+    }
+
+    function openLotsPopover(conid, ticker, positionShares, avgPrice, event) {
+        if (event) {
+            event.stopPropagation();
+            event.preventDefault();
+        }
+
+        const conidKey = String(conid);
+        const existingLots = getLotsForConid(conidKey);
+        const openDate = currentOpenDates[conidKey] || '';
+
+        lotsDraft = existingLots.length > 0
+            ? existingLots.map(lot => ({
+                shares: Number(lot.shares || 0),
+                price: Number(lot.price || 0),
+                date: safeDateValue(lot.date)
+            }))
+            : [createDefaultLot(positionShares, avgPrice, openDate)];
+
+        activeLotsContext = {
+            conid: conidKey,
+            ticker: ticker || '',
+            positionShares: Number(positionShares) || 0,
+            avgPrice: Number(avgPrice) || 0
+        };
+
+        renderLotsPopover();
+        positionLotsPopover(event?.currentTarget);
+    }
+
+    function positionLotsPopover(anchorEl) {
+        const popover = document.getElementById('lots-popover');
+        if (!popover || popover.classList.contains('hidden')) return;
+
+        const rect = anchorEl ? anchorEl.getBoundingClientRect() : null;
+        let top = rect ? rect.bottom + 8 : 80;
+        let left = rect ? rect.left : 20;
+
+        const popoverWidth = popover.offsetWidth || 420;
+        const viewportWidth = window.innerWidth;
+        const viewportHeight = window.innerHeight;
+
+        if (left + popoverWidth > viewportWidth - 8) {
+            left = Math.max(8, viewportWidth - popoverWidth - 8);
+        }
+        if (top + popover.offsetHeight > viewportHeight - 8) {
+            top = Math.max(8, (rect ? rect.top : viewportHeight / 2) - popover.offsetHeight - 8);
+        }
+
+        popover.style.left = `${left}px`;
+        popover.style.top = `${top}px`;
+    }
+
+    function closeLotsPopover() {
+        const popover = document.getElementById('lots-popover');
+        if (!popover) return;
+        popover.classList.add('hidden');
+        popover.innerHTML = '';
+        activeLotsContext = null;
+        lotsDraft = [];
+    }
+
+    function addLotRow(event) {
+        if (event) {
+            event.stopPropagation();
+        }
+        if (!activeLotsContext) return;
+        lotsDraft.push({ shares: '', price: '', date: '' });
+        renderLotsPopover();
+    }
+
+    function removeLotRow(index, event) {
+        if (event) {
+            event.stopPropagation();
+        }
+        if (!activeLotsContext) return;
+        lotsDraft.splice(index, 1);
+        if (lotsDraft.length === 0) {
+            lotsDraft.push({ shares: '', price: '', date: '' });
+        }
+        renderLotsPopover();
+    }
+
+    function updateLotField(index, field, value) {
+        if (!lotsDraft[index]) return;
+        lotsDraft[index][field] = value;
+    }
+
+    function setLotsError(message) {
+        const errorEl = document.getElementById('lots-error');
+        if (errorEl) {
+            errorEl.textContent = message || '';
+        }
+    }
+
+    function validateDraftLots() {
+        const normalizedLots = [];
+        for (let i = 0; i < lotsDraft.length; i++) {
+            const row = lotsDraft[i] || {};
+            const sharesRaw = String(row.shares ?? '').trim();
+            const priceRaw = String(row.price ?? '').trim();
+            const dateRaw = String(row.date ?? '').trim();
+
+            if (sharesRaw === '' && priceRaw === '' && dateRaw === '') {
+                continue;
+            }
+
+            const shares = Number(sharesRaw);
+            if (!Number.isFinite(shares) || shares === 0) {
+                return { error: `Lot ${i + 1}: shares must be a non-zero number.` };
+            }
+
+            const price = Number(priceRaw);
+            if (!Number.isFinite(price) || price < 0) {
+                return { error: `Lot ${i + 1}: price must be a non-negative number.` };
+            }
+
+            if (dateRaw !== '' && !/^\d{4}-\d{2}-\d{2}$/.test(dateRaw)) {
+                return { error: `Lot ${i + 1}: date must be YYYY-MM-DD.` };
+            }
+
+            normalizedLots.push({
+                shares,
+                price,
+                date: dateRaw
+            });
+        }
+
+        return { lots: normalizedLots };
+    }
+
+    async function saveLotsFromPopover() {
+        if (!activeLotsContext) return;
+
+        const validation = validateDraftLots();
+        if (validation.error) {
+            setLotsError(validation.error);
+            return;
+        }
+
+        setLotsError('');
+        try {
+            await saveLots(activeLotsContext.conid, validation.lots, true);
+            closeLotsPopover();
+        } catch (error) {
+            setLotsError(error.message || 'Failed to save lots.');
+        }
+    }
+
+    function renderLotsPopover() {
+        const popover = document.getElementById('lots-popover');
+        if (!popover || !activeLotsContext) return;
+
+        const { ticker, positionShares, avgPrice } = activeLotsContext;
+        const posSharesDisplay = Number.isInteger(positionShares) ? positionShares : positionShares.toFixed(2);
+        const avgPriceDisplay = Number.isFinite(avgPrice) ? avgPrice.toFixed(2) : '0.00';
+
+        const rowsHtml = lotsDraft.map((lot, index) => `
+            <tr>
+                <td>
+                    <input
+                        type="number"
+                        step="0.0001"
+                        class="lot-input"
+                        value="${lot.shares ?? ''}"
+                        onchange="updateLotField(${index}, 'shares', this.value)"
+                    >
+                </td>
+                <td>
+                    <input
+                        type="number"
+                        step="0.0001"
+                        class="lot-input"
+                        value="${lot.price ?? ''}"
+                        onchange="updateLotField(${index}, 'price', this.value)"
+                    >
+                </td>
+                <td>
+                    <input
+                        type="date"
+                        class="lot-input"
+                        value="${safeDateValue(lot.date)}"
+                        onchange="updateLotField(${index}, 'date', this.value)"
+                    >
+                </td>
+                <td style="text-align: center;">
+                    <button class="lot-row-remove" type="button" onclick="removeLotRow(${index}, event)" title="Remove lot">x</button>
+                </td>
+            </tr>
+        `).join('');
+
+        popover.innerHTML = `
+            <div class="lots-title">Lots for ${ticker} (position: ${posSharesDisplay} @ ${avgPriceDisplay})</div>
+            <table class="lots-table">
+                <thead>
+                    <tr>
+                        <th>Shares</th>
+                        <th>Price</th>
+                        <th>Date (optional)</th>
+                        <th></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rowsHtml}
+                </tbody>
+            </table>
+            <div class="lots-actions" style="justify-content: space-between;">
+                <button class="lot-button" type="button" onclick="addLotRow(event)">+ Add Lot</button>
+                <div>
+                    <button class="lot-button" type="button" onclick="closeLotsPopover()">Cancel</button>
+                    <button class="lot-button primary" type="button" onclick="saveLotsFromPopover()">Save</button>
+                </div>
+            </div>
+            <div id="lots-error" class="lots-error"></div>
+        `;
+
+        popover.classList.remove('hidden');
     }
 
     function renderPositions(positions) {
@@ -788,6 +1157,15 @@ header('Content-Type: text/html; charset=utf-8');
             pnlPercent = (pos.unrealizedPnl / costBasis) * 100;
         }
 
+        const isStock = pos.assetClass === 'STK';
+        const conidJs = JSON.stringify(String(pos.conid));
+        const tickerJs = JSON.stringify(String(ticker));
+        const sharesClickAttr = isStock
+            ? `onclick='openLotsPopover(${conidJs}, ${tickerJs}, ${Number(pos.position)}, ${Number(pos.avgPrice)}, event)'`
+            : '';
+        const sharesClass = isStock ? 'shares-editable' : '';
+        const lotsHint = isStock ? getLotsHint(pos.conid) : '';
+
         return `
             <tr>
                 <td>
@@ -795,7 +1173,8 @@ header('Content-Type: text/html; charset=utf-8');
                     ${showTicker && currentTags[ticker] ? `<span class="tag-badge">${currentTags[ticker]}</span>` : ''}
                 </td>
                 <td>
-                    <strong>${pos.position}</strong>
+                    <strong class="${sharesClass}" ${sharesClickAttr}>${pos.position}</strong>
+                    ${lotsHint}
                     ${posSubInfo}
                 </td>
                 <td>${daysToExpiry !== null ? daysToExpiry + 'd' : '-'}</td>
@@ -819,6 +1198,20 @@ header('Content-Type: text/html; charset=utf-8');
 
     // Initial fetch
     fetchPositions();
+
+    document.addEventListener('click', (event) => {
+        const popover = document.getElementById('lots-popover');
+        if (!popover || popover.classList.contains('hidden')) return;
+        if (!popover.contains(event.target)) {
+            closeLotsPopover();
+        }
+    });
+
+    document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+            closeLotsPopover();
+        }
+    });
 
     let isReauthenticating = false;
 
