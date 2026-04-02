@@ -438,12 +438,44 @@ header('Content-Type: text/html; charset=utf-8');
         return null;
     }
 
-    function calculatePositionExposure(pos) {
-        let exposure = 0;
-        if (pos.assetClass === 'STK') {
-            exposure = pos.mktValue;
-        }
-        
+    function getOptionExpiryCode(pos) {
+        if (pos.assetClass !== 'OPT') return null;
+        const match = pos.contractDesc.match(/\[.*?\s+(\d{6})[CP]/);
+        return match ? match[1] : null;
+    }
+
+    function formatExpiryCode(expiryCode) {
+        if (!expiryCode || expiryCode.length !== 6) return 'Unknown expiry';
+        const year = 2000 + parseInt(expiryCode.substring(0, 2), 10);
+        const month = parseInt(expiryCode.substring(2, 4), 10) - 1;
+        const day = parseInt(expiryCode.substring(4, 6), 10);
+        const expiryDate = new Date(year, month, day);
+        return expiryDate.toLocaleDateString(undefined, {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric'
+        });
+    }
+
+    function shouldShowExpirationPremiumSums() {
+        return !currentGroupByTicker && currentFilter === 'OPT' && currentSort === 'expires';
+    }
+
+    function renderExpirationSummaryRow(expiryCode, totalPnL, totalLiability) {
+        const pnlClass = totalPnL >= 0 ? 'pnl-positive' : 'pnl-negative';
+        return `
+            <tr class="summary-row">
+                <td colspan="12" class="summary-cell">
+                    <div class="summary-content">
+                        <div>Expiration Premium (${formatExpiryCode(expiryCode)}): <span class="${pnlClass}">${formatCurrency(totalPnL)}</span></div>
+                        <div>Liability: <span class="pos-value">${formatCurrency(totalLiability)}</span></div>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }
+
+    function calculatePositionLiability(pos) {
         let liability = 0;
         if (pos.assetClass === 'OPT' && pos.position < 0) {
             const desc = pos.contractDesc.split('[')[0].trim();
@@ -456,7 +488,15 @@ header('Content-Type: text/html; charset=utf-8');
                 }
             }
         }
-        exposure += liability;
+        return liability;
+    }
+
+    function calculatePositionExposure(pos) {
+        let exposure = 0;
+        if (pos.assetClass === 'STK') {
+            exposure = pos.mktValue;
+        }
+        exposure += calculatePositionLiability(pos);
         return exposure;
     }
 
@@ -1090,11 +1130,34 @@ header('Content-Type: text/html; charset=utf-8');
                 return a.localeCompare(b);
             });
 
+            const showExpirationPremiumSums = shouldShowExpirationPremiumSums();
+
             sortedTags.forEach((tag, tagIndex) => {
                 if (tagIndex > 0) html += '<tr class="tag-spacer"><td colspan="12"></td></tr>';
+                let currentExpiryCode = null;
+                let currentExpiryPnL = 0;
+                let currentExpiryLiability = 0;
+
                 tagGroups[tag].forEach(pos => {
+                    const expiryCode = showExpirationPremiumSums ? getOptionExpiryCode(pos) : null;
+                    if (showExpirationPremiumSums && currentExpiryCode !== null && expiryCode !== currentExpiryCode) {
+                        html += renderExpirationSummaryRow(currentExpiryCode, currentExpiryPnL, currentExpiryLiability);
+                        currentExpiryPnL = 0;
+                        currentExpiryLiability = 0;
+                    }
+
                     html += renderPositionRow(pos, getTicker(pos), true);
+
+                    if (showExpirationPremiumSums) {
+                        currentExpiryCode = expiryCode;
+                        currentExpiryPnL += pos.unrealizedPnl;
+                        currentExpiryLiability += calculatePositionLiability(pos);
+                    }
                 });
+
+                if (showExpirationPremiumSums && currentExpiryCode !== null) {
+                    html += renderExpirationSummaryRow(currentExpiryCode, currentExpiryPnL, currentExpiryLiability);
+                }
             });
         }
 
@@ -1120,7 +1183,7 @@ header('Content-Type: text/html; charset=utf-8');
             targetReturn = requiredReturnPercent(ageDays);
         }
 
-        let liability = 0;
+        let liability = calculatePositionLiability(pos);
         let strikeBasis = 0;
         let roc = null;
         let posSubInfo = '';
@@ -1134,14 +1197,9 @@ header('Content-Type: text/html; charset=utf-8');
                 posSubInfo = `<div style="font-size: 0.7rem; color: #888; margin-top: 2px;">${strike}${type} ${expiry}</div>`;
 
                 const strikeVal = parseFloat(strike);
-                const isPut = type === 'P';
                 if (!isNaN(strikeVal)) {
                     strikeBasis = Math.abs(pos.position * strikeVal * 100);
-                    // The "Liability" column still only displays for short Puts
-                    if (pos.position < 0 && isPut) {
-                        liability = strikeBasis;
-                    }
-                    
+
                     // Calculate ROC: (Premium Collected / Capital at Risk)
                     if (strikeVal > 0) {
                         roc = (pos.avgPrice / strikeVal) * 100;
