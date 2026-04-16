@@ -461,13 +461,14 @@ header('Content-Type: text/html; charset=utf-8');
         return !currentGroupByTicker && currentFilter === 'OPT' && currentSort === 'expires';
     }
 
-    function renderExpirationSummaryRow(expiryCode, totalPnL, totalLiability) {
+    function renderExpirationSummaryRow(expiryCode, totalPnL, totalCollectedPremium, totalLiability) {
         const pnlClass = totalPnL >= 0 ? 'pnl-positive' : 'pnl-negative';
         return `
             <tr class="summary-row">
                 <td colspan="12" class="summary-cell">
                     <div class="summary-content">
                         <div>Expiration Premium (${formatExpiryCode(expiryCode)}): <span class="${pnlClass}">${formatCurrency(totalPnL)}</span></div>
+                        <div>Collected: <span class="pos-value">${formatCurrency(totalCollectedPremium)}</span></div>
                         <div>Liability: <span class="pos-value">${formatCurrency(totalLiability)}</span></div>
                     </div>
                 </td>
@@ -489,6 +490,12 @@ header('Content-Type: text/html; charset=utf-8');
             }
         }
         return liability;
+    }
+
+    function calculateCollectedPremium(pos) {
+        if (pos.assetClass !== 'OPT') return 0;
+        const displayedAvgPrice = parseFloat(Math.abs(pos.avgPrice).toFixed(2));
+        return Math.abs(pos.position) * displayedAvgPrice * 100;
     }
 
     function calculatePositionExposure(pos) {
@@ -1136,13 +1143,20 @@ header('Content-Type: text/html; charset=utf-8');
                 if (tagIndex > 0) html += '<tr class="tag-spacer"><td colspan="12"></td></tr>';
                 let currentExpiryCode = null;
                 let currentExpiryPnL = 0;
+                let currentExpiryCollectedPremium = 0;
                 let currentExpiryLiability = 0;
 
                 tagGroups[tag].forEach(pos => {
                     const expiryCode = showExpirationPremiumSums ? getOptionExpiryCode(pos) : null;
                     if (showExpirationPremiumSums && currentExpiryCode !== null && expiryCode !== currentExpiryCode) {
-                        html += renderExpirationSummaryRow(currentExpiryCode, currentExpiryPnL, currentExpiryLiability);
+                        html += renderExpirationSummaryRow(
+                            currentExpiryCode,
+                            currentExpiryPnL,
+                            currentExpiryCollectedPremium,
+                            currentExpiryLiability
+                        );
                         currentExpiryPnL = 0;
+                        currentExpiryCollectedPremium = 0;
                         currentExpiryLiability = 0;
                     }
 
@@ -1151,12 +1165,18 @@ header('Content-Type: text/html; charset=utf-8');
                     if (showExpirationPremiumSums) {
                         currentExpiryCode = expiryCode;
                         currentExpiryPnL += pos.unrealizedPnl;
+                        currentExpiryCollectedPremium += calculateCollectedPremium(pos);
                         currentExpiryLiability += calculatePositionLiability(pos);
                     }
                 });
 
                 if (showExpirationPremiumSums && currentExpiryCode !== null) {
-                    html += renderExpirationSummaryRow(currentExpiryCode, currentExpiryPnL, currentExpiryLiability);
+                    html += renderExpirationSummaryRow(
+                        currentExpiryCode,
+                        currentExpiryPnL,
+                        currentExpiryCollectedPremium,
+                        currentExpiryLiability
+                    );
                 }
             });
         }
