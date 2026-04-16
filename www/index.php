@@ -143,6 +143,7 @@ header('Content-Type: text/html; charset=utf-8');
             margin-bottom: 5px;
             display: flex;
             align-items: center;
+            flex-wrap: wrap;
             gap: 10px;
             font-size: 0.8rem;
         }
@@ -156,6 +157,91 @@ header('Content-Type: text/html; charset=utf-8');
             border-radius: 4px;
             background-color: #fff;
             font-size: 0.8rem;
+        }
+        .preset-save-button {
+            margin-left: auto;
+            border: 1px solid #0288d1;
+            background: #0288d1;
+            color: #fff;
+            border-radius: 4px;
+            padding: 4px 10px;
+            font-size: 0.78rem;
+            cursor: pointer;
+        }
+        .preset-save-button:hover {
+            filter: brightness(0.96);
+        }
+        .preset-controls {
+            margin-left: auto;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+            justify-content: flex-end;
+        }
+        .preset-bar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+            justify-content: flex-end;
+        }
+        .preset-chip-group {
+            display: inline-flex;
+            align-items: center;
+            border: 1px solid #cfd8dc;
+            border-radius: 999px;
+            background: #fff;
+            overflow: hidden;
+        }
+        .preset-chip-group.active {
+            background: #e1f5fe;
+            border-color: #0288d1;
+        }
+        .preset-chip {
+            border: none;
+            background: transparent;
+            color: #455a64;
+            padding: 4px 10px;
+            font-size: 0.76rem;
+            cursor: pointer;
+        }
+        .preset-chip:hover {
+            color: #0288d1;
+        }
+        .preset-chip-group.active .preset-chip {
+            color: #0288d1;
+            font-weight: 600;
+        }
+        .preset-delete-button {
+            border: none;
+            border-left: 1px solid #e0e6ea;
+            background: transparent;
+            color: #90a4ae;
+            padding: 4px 8px 4px 6px;
+            font-size: 0.8rem;
+            line-height: 1;
+            cursor: pointer;
+        }
+        .preset-delete-button:hover {
+            color: #d35454;
+        }
+        .preset-chip-group.active .preset-delete-button {
+            border-left-color: #81d4fa;
+        }
+        .status-message {
+            min-height: 1.2em;
+            margin: 4px 0 10px;
+            font-size: 0.76rem;
+            color: #666;
+        }
+        .status-message.error {
+            color: #d35454;
+            border: none;
+            background: transparent;
+            padding: 0;
+            text-align: left;
+            margin-top: 4px;
         }
         .ticker-name {
             cursor: pointer;
@@ -308,9 +394,13 @@ header('Content-Type: text/html; charset=utf-8');
             <input type="checkbox" id="group-ticker-toggle" onchange="updateGroupByTicker(this.checked)">
             <label for="group-ticker-toggle">Group by Ticker</label>
         </div>
+        <div class="preset-controls">
+            <div id="preset-bar" class="preset-bar"></div>
+            <button class="preset-save-button" type="button" onclick="saveCurrentPreset()">Save Preset</button>
+        </div>
     </div>
 
-    <div id="status"></div>
+    <div id="status" class="status-message"></div>
     <div id="table-container">
         <div class="loading">Loading positions...</div>
     </div>
@@ -325,20 +415,22 @@ header('Content-Type: text/html; charset=utf-8');
     let currentSort = 'ticker';
     let currentFilter = 'all';
     let currentGroupByTicker = true;
+    let currentPresets = [];
     let lastPositionsData = [];
     let activeLotsContext = null;
     let lotsDraft = [];
 
     async function fetchPositions() {
         try {
-            const [posRes, cashRes, tagsRes, prefsRes, openDatesRes, lotsRes, tradesRes] = await Promise.all([
+            const [posRes, cashRes, tagsRes, prefsRes, openDatesRes, lotsRes, tradesRes, presetsRes] = await Promise.all([
                 fetch('list_positions.php'),
                 fetch('list_cash.php'),
                 fetch('tags.php'),
                 fetch('preferences.php'),
                 fetch('open_dates.php'),
                 fetch('lots.php'),
-                fetch('list_trades.php?days=7')
+                fetch('list_trades.php?days=7'),
+                fetch('presets.php')
             ]);
 
             if (!posRes.ok) throw new Error(`Positions fetch failed: ${posRes.status}`);
@@ -348,6 +440,7 @@ header('Content-Type: text/html; charset=utf-8');
             if (!openDatesRes.ok) throw new Error(`Open dates fetch failed: ${openDatesRes.status}`);
             if (!lotsRes.ok) throw new Error(`Lots fetch failed: ${lotsRes.status}`);
             if (!tradesRes.ok) throw new Error(`Trades fetch failed: ${tradesRes.status}`);
+            if (!presetsRes.ok) throw new Error(`Presets fetch failed: ${presetsRes.status}`);
 
             const posData = await posRes.json();
             const cashData = await cashRes.json();
@@ -357,6 +450,8 @@ header('Content-Type: text/html; charset=utf-8');
             const lotsData = await lotsRes.json();
             currentLotsByConid = lotsData && typeof lotsData === 'object' ? lotsData : {};
             const tradesData = await tradesRes.json();
+            const presetsData = await presetsRes.json();
+            currentPresets = Array.isArray(presetsData.presets) ? presetsData.presets : [];
 
             if (prefs.sort) {
                 currentSort = prefs.sort;
@@ -400,6 +495,7 @@ header('Content-Type: text/html; charset=utf-8');
 
             lastPositionsData = posData.positions;
             renderAccountSummary(posData.positions, cashData);
+            renderPresetBar();
             renderPositions(posData.positions);
         } catch (error) {
             console.error('Fetch error:', error);
@@ -585,6 +681,173 @@ header('Content-Type: text/html; charset=utf-8');
         return value.toFixed(2) + '%';
     }
 
+    function escapeHtml(value) {
+        return String(value)
+            .replaceAll('&', '&amp;')
+            .replaceAll('<', '&lt;')
+            .replaceAll('>', '&gt;')
+            .replaceAll('"', '&quot;')
+            .replaceAll("'", '&#39;');
+    }
+
+    function setStatusMessage(message, isError = false) {
+        const statusEl = document.getElementById('status');
+        statusEl.textContent = message || '';
+        statusEl.className = isError ? 'status-message error' : 'status-message';
+    }
+
+    function getCurrentPresetConfig() {
+        return {
+            sort: currentSort,
+            filter: currentFilter,
+            groupByTicker: currentGroupByTicker
+        };
+    }
+
+    function isPresetActive(preset) {
+        return preset
+            && preset.sort === currentSort
+            && preset.filter === currentFilter
+            && Boolean(preset.groupByTicker) === currentGroupByTicker;
+    }
+
+    function renderPresetBar() {
+        const presetBar = document.getElementById('preset-bar');
+        if (!currentPresets.length) {
+            presetBar.innerHTML = '';
+            return;
+        }
+
+        const chips = currentPresets.map((preset) => {
+            const presetName = String(preset.name || 'Untitled');
+            const safeName = JSON.stringify(presetName);
+            const displayName = escapeHtml(presetName);
+            const deleteLabel = escapeHtml(`Delete preset ${presetName}`);
+            const activeClass = isPresetActive(preset) ? 'active' : '';
+            return `
+                <span class="preset-chip-group ${activeClass}">
+                    <button type="button" class="preset-chip" onclick='applyPreset(${safeName})'>${displayName}</button>
+                    <button type="button" class="preset-delete-button" onclick='deletePreset(${safeName})' aria-label="${deleteLabel}" title="Delete preset">x</button>
+                </span>
+            `;
+        }).join('');
+
+        presetBar.innerHTML = chips;
+    }
+
+    async function persistViewPreferences(config) {
+        await fetch('preferences.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(config)
+        });
+    }
+
+    async function applyViewState(nextConfig, persist = true) {
+        currentSort = nextConfig.sort ?? currentSort;
+        currentFilter = nextConfig.filter ?? currentFilter;
+        currentGroupByTicker = nextConfig.groupByTicker ?? currentGroupByTicker;
+
+        document.getElementById('sort-select').value = currentSort;
+        document.getElementById('filter-select').value = currentFilter;
+        document.getElementById('group-ticker-toggle').checked = currentGroupByTicker;
+
+        renderPresetBar();
+        renderPositions(lastPositionsData);
+
+        if (!persist) return;
+
+        try {
+            await persistViewPreferences(getCurrentPresetConfig());
+        } catch (error) {
+            console.error('Save view preferences error:', error);
+        }
+    }
+
+    async function savePreset(name) {
+        const res = await fetch('presets.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                name,
+                ...getCurrentPresetConfig()
+            })
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data.error || `Preset save failed: ${res.status}`);
+        }
+
+        currentPresets = Array.isArray(data.presets) ? data.presets : [];
+        renderPresetBar();
+    }
+
+    async function removePreset(name) {
+        const res = await fetch('presets.php', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name })
+        });
+
+        const data = await res.json();
+        if (!res.ok) {
+            throw new Error(data.error || `Preset delete failed: ${res.status}`);
+        }
+
+        currentPresets = Array.isArray(data.presets) ? data.presets : [];
+        renderPresetBar();
+    }
+
+    async function saveCurrentPreset() {
+        const rawName = prompt('Enter a name for this preset:');
+        if (rawName === null) return;
+
+        const name = rawName.trim();
+        if (!name) {
+            setStatusMessage('Preset name is required.', true);
+            return;
+        }
+
+        const existingPreset = currentPresets.find(preset => preset.name === name);
+        if (existingPreset && !confirm(`Replace the existing preset "${name}"?`)) {
+            return;
+        }
+
+        try {
+            await savePreset(name);
+            setStatusMessage(`Saved preset "${name}".`);
+        } catch (error) {
+            console.error('Save preset error:', error);
+            setStatusMessage(error.message, true);
+        }
+    }
+
+    async function applyPreset(name) {
+        const preset = currentPresets.find(item => item.name === name);
+        if (!preset) {
+            setStatusMessage(`Preset "${name}" was not found.`, true);
+            return;
+        }
+
+        setStatusMessage(`Applied preset "${name}".`);
+        await applyViewState(preset);
+    }
+
+    async function deletePreset(name) {
+        if (!confirm(`Delete preset "${name}"?`)) {
+            return;
+        }
+
+        try {
+            await removePreset(name);
+            setStatusMessage(`Deleted preset "${name}".`);
+        } catch (error) {
+            console.error('Delete preset error:', error);
+            setStatusMessage(error.message, true);
+        }
+    }
+
     async function saveTag(ticker, tag) {
         try {
             const res = await fetch('tags.php', {
@@ -645,45 +908,15 @@ header('Content-Type: text/html; charset=utf-8');
     }
 
     async function updateSort(sortValue) {
-        currentSort = sortValue;
-        renderPositions(lastPositionsData);
-        try {
-            await fetch('preferences.php', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ sort: sortValue })
-            });
-        } catch (error) {
-            console.error('Save sort preference error:', error);
-        }
+        await applyViewState({ sort: sortValue });
     }
 
     async function updateFilter(filterValue) {
-        currentFilter = filterValue;
-        renderPositions(lastPositionsData);
-        try {
-            await fetch('preferences.php', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ filter: filterValue })
-            });
-        } catch (error) {
-            console.error('Save filter preference error:', error);
-        }
+        await applyViewState({ filter: filterValue });
     }
 
     async function updateGroupByTicker(enabled) {
-        currentGroupByTicker = enabled;
-        renderPositions(lastPositionsData);
-        try {
-            await fetch('preferences.php', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ groupByTicker: enabled })
-            });
-        } catch (error) {
-            console.error('Save group-by preference error:', error);
-        }
+        await applyViewState({ groupByTicker: enabled });
     }
 
     function editTag(ticker) {

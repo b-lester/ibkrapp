@@ -1,0 +1,16 @@
+{
+    "presets": [
+        {
+            "name": "Everything",
+            "sort": "exposure",
+            "filter": "all",
+            "groupByTicker": true
+        },
+        {
+            "name": "Options",
+            "sort": "expires",
+            "filter": "OPT",
+            "groupByTicker": false
+        }
+    ]
+}
