@@ -553,6 +553,17 @@ header('Content-Type: text/html; charset=utf-8');
         });
     }
 
+    function formatCompactExpiryCode(expiryCode) {
+        if (!expiryCode || expiryCode.length !== 6) return 'Unknown expiry';
+        const year = expiryCode.substring(0, 2);
+        const monthIndex = parseInt(expiryCode.substring(2, 4), 10) - 1;
+        const day = String(parseInt(expiryCode.substring(4, 6), 10));
+        const monthNames = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+        const month = monthNames[monthIndex];
+        if (!month) return 'Unknown expiry';
+        return `${month} ${day} ${year}`;
+    }
+
     function shouldShowExpirationPremiumSums() {
         return !currentGroupByTicker && currentFilter === 'OPT' && currentSort === 'expires';
     }
@@ -1444,10 +1455,11 @@ header('Content-Type: text/html; charset=utf-8');
             const desc = pos.contractDesc.split('[')[0].trim();
             const parts = desc.split(/\s+/);
             if (parts.length >= 4) {
-                const expiry = parts[parts.length - 3];
                 const strike = parts[parts.length - 2];
                 const type = parts[parts.length - 1];
-                posSubInfo = `<div style="font-size: 0.7rem; color: #888; margin-top: 2px;">${strike}${type} ${expiry}</div>`;
+                const expiryCode = getOptionExpiryCode(pos);
+                const expiryDisplay = expiryCode ? formatCompactExpiryCode(expiryCode) : parts[parts.length - 3];
+                posSubInfo = `<div style="font-size: 0.7rem; color: #888; margin-top: 2px;">${strike}${type} ${expiryDisplay}</div>`;
 
                 const strikeVal = parseFloat(strike);
                 if (!isNaN(strikeVal)) {
