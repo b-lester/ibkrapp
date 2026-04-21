@@ -171,6 +171,11 @@ header('Content-Type: text/html; charset=utf-8');
         .preset-save-button:hover {
             filter: brightness(0.96);
         }
+        .preset-save-button:disabled {
+            opacity: 0.55;
+            cursor: not-allowed;
+            filter: none;
+        }
         .preset-controls {
             margin-left: auto;
             display: flex;
@@ -234,6 +239,10 @@ header('Content-Type: text/html; charset=utf-8');
             margin: 4px 0 10px;
             font-size: 0.76rem;
             color: #666;
+        }
+        .status-message.mode {
+            color: #0277bd;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
         }
         .status-message.error {
             color: #d35454;
@@ -396,7 +405,7 @@ header('Content-Type: text/html; charset=utf-8');
         </div>
         <div class="preset-controls">
             <div id="preset-bar" class="preset-bar"></div>
-            <button class="preset-save-button" type="button" onclick="saveCurrentPreset()">Save Preset</button>
+            <button id="save-preset-button" class="preset-save-button" type="button" onclick="saveCurrentPreset()">Save Preset</button>
         </div>
     </div>
 
@@ -419,8 +428,13 @@ header('Content-Type: text/html; charset=utf-8');
     let lastPositionsData = [];
     let activeLotsContext = null;
     let lotsDraft = [];
+    let statusMessageText = '';
+    let statusMessageIsError = false;
+    let isPositionsLoading = true;
 
     async function fetchPositions() {
+        isPositionsLoading = true;
+        renderSavePresetButton();
         try {
             const [posRes, cashRes, tagsRes, prefsRes, openDatesRes, lotsRes, tradesRes, presetsRes] = await Promise.all([
                 fetch('list_positions.php'),
@@ -495,7 +509,9 @@ header('Content-Type: text/html; charset=utf-8');
 
             lastPositionsData = posData.positions;
             renderAccountSummary(posData.positions, cashData);
+            renderStatusMessage();
             renderPresetBar();
+            renderSavePresetButton();
             renderPositions(posData.positions);
         } catch (error) {
             console.error('Fetch error:', error);
@@ -504,6 +520,11 @@ header('Content-Type: text/html; charset=utf-8');
                     <strong>Error:</strong> ${error.message}
                 </div>
             `;
+            lastPositionsData = [];
+            renderSavePresetButton();
+        } finally {
+            isPositionsLoading = false;
+            renderSavePresetButton();
         }
     }
 
@@ -702,9 +723,33 @@ header('Content-Type: text/html; charset=utf-8');
     }
 
     function setStatusMessage(message, isError = false) {
+        statusMessageText = message || '';
+        statusMessageIsError = isError;
+        renderStatusMessage();
+    }
+
+    function clearStatusMessage() {
+        statusMessageText = '';
+        statusMessageIsError = false;
+        renderStatusMessage();
+    }
+
+    function renderStatusMessage() {
         const statusEl = document.getElementById('status');
-        statusEl.textContent = message || '';
-        statusEl.className = isError ? 'status-message error' : 'status-message';
+        if (statusMessageText) {
+            statusEl.textContent = statusMessageText;
+            statusEl.className = statusMessageIsError ? 'status-message error' : 'status-message';
+            return;
+        }
+
+        if (shouldShowExpirationPremiumSums()) {
+            statusEl.textContent = 'shouldShowExpirationPremiumSums=true';
+            statusEl.className = 'status-message mode';
+            return;
+        }
+
+        statusEl.textContent = '';
+        statusEl.className = 'status-message';
     }
 
     function getCurrentPresetConfig() {
@@ -722,10 +767,22 @@ header('Content-Type: text/html; charset=utf-8');
             && Boolean(preset.groupByTicker) === currentGroupByTicker;
     }
 
+    function hasAppliedPreset() {
+        return currentPresets.some((preset) => isPresetActive(preset));
+    }
+
+    function renderSavePresetButton() {
+        const button = document.getElementById('save-preset-button');
+        if (!button) return;
+        const hasData = Array.isArray(lastPositionsData) && lastPositionsData.length > 0;
+        button.disabled = isPositionsLoading || !hasData || hasAppliedPreset();
+    }
+
     function renderPresetBar() {
         const presetBar = document.getElementById('preset-bar');
         if (!currentPresets.length) {
             presetBar.innerHTML = '';
+            renderSavePresetButton();
             return;
         }
 
@@ -744,6 +801,7 @@ header('Content-Type: text/html; charset=utf-8');
         }).join('');
 
         presetBar.innerHTML = chips;
+        renderSavePresetButton();
     }
 
     async function persistViewPreferences(config) {
@@ -763,7 +821,9 @@ header('Content-Type: text/html; charset=utf-8');
         document.getElementById('filter-select').value = currentFilter;
         document.getElementById('group-ticker-toggle').checked = currentGroupByTicker;
 
+        clearStatusMessage();
         renderPresetBar();
+        renderSavePresetButton();
         renderPositions(lastPositionsData);
 
         if (!persist) return;
@@ -811,6 +871,10 @@ header('Content-Type: text/html; charset=utf-8');
     }
 
     async function saveCurrentPreset() {
+        if (isPositionsLoading || !Array.isArray(lastPositionsData) || lastPositionsData.length === 0 || hasAppliedPreset()) {
+            return;
+        }
+
         const rawName = prompt('Enter a name for this preset:');
         if (rawName === null) return;
 
@@ -841,7 +905,6 @@ header('Content-Type: text/html; charset=utf-8');
             return;
         }
 
-        setStatusMessage(`Applied preset "${name}".`);
         await applyViewState(preset);
     }
 
