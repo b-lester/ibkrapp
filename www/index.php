@@ -604,6 +604,21 @@ header('Content-Type: text/html; charset=utf-8');
         `;
     }
 
+    function renderExpirationCumulativeSummaryRow(totalPnL, totalCollectedPremium, totalLiability) {
+        const pnlClass = totalPnL >= 0 ? 'pnl-positive' : 'pnl-negative';
+        return `
+            <tr class="summary-row">
+                <td colspan="12" class="summary-cell">
+                    <div class="summary-content">
+                        <div><strong>Cumulative Premium:</strong> <span class="${pnlClass}">${formatCurrency(totalPnL)}</span></div>
+                        <div>Collected: <span class="pos-value">${formatCurrency(totalCollectedPremium)}</span></div>
+                        <div>Liability: <span class="pos-value">${formatCurrency(totalLiability)}</span></div>
+                    </div>
+                </td>
+            </tr>
+        `;
+    }
+
     function calculatePositionLiability(pos) {
         let liability = 0;
         if (pos.assetClass === 'OPT' && pos.position < 0) {
@@ -1445,6 +1460,9 @@ header('Content-Type: text/html; charset=utf-8');
             });
 
             const showExpirationPremiumSums = shouldShowExpirationPremiumSums();
+            let cumulativeExpiryPnL = 0;
+            let cumulativeExpiryCollectedPremium = 0;
+            let cumulativeExpiryLiability = 0;
 
             sortedTags.forEach((tag, tagIndex) => {
                 if (tagIndex > 0) html += '<tr class="tag-spacer"><td colspan="12"></td></tr>';
@@ -1462,6 +1480,9 @@ header('Content-Type: text/html; charset=utf-8');
                             currentExpiryCollectedPremium,
                             currentExpiryLiability
                         );
+                        cumulativeExpiryPnL += currentExpiryPnL;
+                        cumulativeExpiryCollectedPremium += currentExpiryCollectedPremium;
+                        cumulativeExpiryLiability += currentExpiryLiability;
                         currentExpiryPnL = 0;
                         currentExpiryCollectedPremium = 0;
                         currentExpiryLiability = 0;
@@ -1484,8 +1505,19 @@ header('Content-Type: text/html; charset=utf-8');
                         currentExpiryCollectedPremium,
                         currentExpiryLiability
                     );
+                    cumulativeExpiryPnL += currentExpiryPnL;
+                    cumulativeExpiryCollectedPremium += currentExpiryCollectedPremium;
+                    cumulativeExpiryLiability += currentExpiryLiability;
                 }
             });
+
+            if (showExpirationPremiumSums) {
+                html += renderExpirationCumulativeSummaryRow(
+                    cumulativeExpiryPnL,
+                    cumulativeExpiryCollectedPremium,
+                    cumulativeExpiryLiability
+                );
+            }
         }
 
         html += `</tbody></table>`;
