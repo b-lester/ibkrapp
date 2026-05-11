@@ -67,6 +67,10 @@ header('Content-Type: text/html; charset=utf-8');
             text-transform: uppercase;
             font-size: 0.7rem;
             color: #666;
+            position: sticky;
+            top: 0;
+            z-index: 5;
+            box-shadow: 0 1px 0 #dfe5e8;
         }
         .group-header {
             background-color: #f1f8ff;
