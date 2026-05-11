@@ -641,6 +641,23 @@ header('Content-Type: text/html; charset=utf-8');
         return Math.abs(pos.position) * displayedAvgPrice * 100;
     }
 
+    function getOptionContractDetails(pos) {
+        if (pos.assetClass !== 'OPT') return null;
+        const desc = pos.contractDesc.split('[')[0].trim();
+        const parts = desc.split(/\s+/);
+        if (parts.length < 4) return null;
+
+        const strike = parseFloat(parts[parts.length - 2]);
+        const type = parts[parts.length - 1];
+        if (Number.isNaN(strike) || (type !== 'C' && type !== 'P')) return null;
+
+        return {
+            strike,
+            type,
+            expiryText: parts[parts.length - 3]
+        };
+    }
+
     function calculatePositionExposure(pos) {
         let exposure = 0;
         if (pos.assetClass === 'STK') {
@@ -648,6 +665,57 @@ header('Content-Type: text/html; charset=utf-8');
         }
         exposure += calculatePositionLiability(pos);
         return exposure;
+    }
+
+    function calculateTickerExposure(positions) {
+        let stockExposure = 0;
+        let totalLongShares = 0;
+        let underlyingPrice = null;
+        let liabilityExposure = 0;
+        const shortCalls = [];
+
+        positions.forEach((pos) => {
+            if (pos.assetClass === 'STK') {
+                stockExposure += pos.mktValue;
+                if (pos.position > 0) {
+                    totalLongShares += pos.position;
+                    underlyingPrice = pos.mktPrice;
+                }
+                return;
+            }
+
+            liabilityExposure += calculatePositionLiability(pos);
+
+            if (pos.position >= 0) return;
+
+            const option = getOptionContractDetails(pos);
+            if (!option || option.type !== 'C') return;
+
+            shortCalls.push({
+                strike: option.strike,
+                shares: Math.abs(pos.position) * 100
+            });
+        });
+
+        let coveredCallReduction = 0;
+        if (underlyingPrice !== null && totalLongShares > 0) {
+            let remainingCoveredShares = totalLongShares;
+            shortCalls
+                .sort((a, b) => a.strike - b.strike)
+                .forEach((call) => {
+                    if (remainingCoveredShares <= 0 || underlyingPrice <= call.strike) return;
+                    const coveredShares = Math.min(remainingCoveredShares, call.shares);
+                    coveredCallReduction += (underlyingPrice - call.strike) * coveredShares;
+                    remainingCoveredShares -= coveredShares;
+                });
+        }
+
+        return {
+            stockExposure,
+            liabilityExposure,
+            coveredCallReduction,
+            totalExposure: stockExposure + liabilityExposure - coveredCallReduction
+        };
     }
 
     function renderAccountSummary(positions, cashData) {
@@ -674,15 +742,19 @@ header('Content-Type: text/html; charset=utf-8');
         let totalExposure = 0;
         let stocksExposure = 0;
         if (positions) {
-            positions.forEach(pos => {
+            const tickerGroups = {};
+            positions.forEach((pos) => {
                 const ticker = getTicker(pos);
+                if (!tickerGroups[ticker]) tickerGroups[ticker] = [];
+                tickerGroups[ticker].push(pos);
+            });
+
+            Object.entries(tickerGroups).forEach(([ticker, tickerPositions]) => {
                 const tag = currentTags[ticker] || '';
-                if (tag !== 'safe') {
-                    if (pos.assetClass === 'STK') {
-                        stocksExposure += pos.mktValue;
-                    }
-                    totalExposure += calculatePositionExposure(pos);
-                }
+                if (tag === 'safe') return;
+                const exposure = calculateTickerExposure(tickerPositions);
+                stocksExposure += exposure.stockExposure - exposure.coveredCallReduction;
+                totalExposure += exposure.totalExposure;
             });
         }
 
@@ -1334,7 +1406,6 @@ header('Content-Type: text/html; charset=utf-8');
                 const group = tickerGroups[ticker];
                 group.positions.push(pos);
                 group.totalPnL += pos.unrealizedPnl;
-                group.totalExposure += calculatePositionExposure(pos);
                 group.costBasis += Math.abs(pos.position * pos.avgCost);
                 
                 if (pos.assetClass === 'STK') {
@@ -1355,6 +1426,10 @@ header('Content-Type: text/html; charset=utf-8');
                 if (days !== null && days < group.minDaysToExpiry) {
                     group.minDaysToExpiry = days;
                 }
+            });
+
+            Object.values(tickerGroups).forEach((group) => {
+                group.totalExposure = calculateTickerExposure(group.positions).totalExposure;
             });
 
             // 2. Sort tickers based on selected option
