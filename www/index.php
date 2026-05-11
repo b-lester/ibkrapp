@@ -61,6 +61,9 @@ header('Content-Type: text/html; charset=utf-8');
             padding: 6px 8px;
             border-bottom: 1px solid #eee;
         }
+        td.column-hover {
+            background-color: #e8f2fb;
+        }
         th {
             background-color: #f8f9fa;
             font-weight: 600;
@@ -71,6 +74,9 @@ header('Content-Type: text/html; charset=utf-8');
             top: 0;
             z-index: 5;
             box-shadow: 0 1px 0 #dfe5e8;
+        }
+        th.column-hover {
+            background-color: #d8eaf7;
         }
         .group-header {
             background-color: #f1f8ff;
@@ -1622,6 +1628,44 @@ header('Content-Type: text/html; charset=utf-8');
 
         html += `</tbody></table>`;
         document.getElementById('table-container').innerHTML = html;
+        attachColumnHoverEffects();
+    }
+
+    function attachColumnHoverEffects() {
+        const table = document.querySelector('#table-container table');
+        if (!table) return;
+
+        let activeColumnIndex = null;
+
+        const clearColumnHover = () => {
+            if (activeColumnIndex === null) return;
+            table.querySelectorAll('.column-hover').forEach((cell) => {
+                cell.classList.remove('column-hover');
+            });
+            activeColumnIndex = null;
+        };
+
+        const applyColumnHover = (columnIndex) => {
+            if (columnIndex === null || activeColumnIndex === columnIndex) return;
+            clearColumnHover();
+            activeColumnIndex = columnIndex;
+
+            table.querySelectorAll('tr').forEach((row) => {
+                const cell = row.children[columnIndex];
+                if (!cell || cell.colSpan > 1) return;
+                cell.classList.add('column-hover');
+            });
+        };
+
+        table.onmouseover = (event) => {
+            const cell = event.target.closest('td, th');
+            if (!cell || !table.contains(cell) || cell.colSpan > 1) return;
+            applyColumnHover(cell.cellIndex);
+        };
+
+        table.onmouseleave = () => {
+            clearColumnHover();
+        };
     }
 
     function renderPositionRow(pos, ticker, showTicker) {
