@@ -718,6 +718,21 @@ header('Content-Type: text/html; charset=utf-8');
         };
     }
 
+    function calculateGroupCostBasis(positions) {
+        let costBasis = 0;
+
+        positions.forEach((pos) => {
+            if (pos.assetClass === 'STK') {
+                costBasis += Math.abs(pos.position * pos.avgCost);
+                return;
+            }
+
+            costBasis += calculatePositionLiability(pos);
+        });
+
+        return costBasis;
+    }
+
     function renderAccountSummary(positions, cashData) {
         // Extract account level info from the BASE currency ledger of the first account found
         let positionsValue = 0;
@@ -1406,7 +1421,6 @@ header('Content-Type: text/html; charset=utf-8');
                 const group = tickerGroups[ticker];
                 group.positions.push(pos);
                 group.totalPnL += pos.unrealizedPnl;
-                group.costBasis += Math.abs(pos.position * pos.avgCost);
                 
                 if (pos.assetClass === 'STK') {
                     group.totalShares += pos.position;
@@ -1430,6 +1444,7 @@ header('Content-Type: text/html; charset=utf-8');
 
             Object.values(tickerGroups).forEach((group) => {
                 group.totalExposure = calculateTickerExposure(group.positions).totalExposure;
+                group.costBasis = calculateGroupCostBasis(group.positions);
             });
 
             // 2. Sort tickers based on selected option
@@ -1481,8 +1496,15 @@ header('Content-Type: text/html; charset=utf-8');
 
                     const groupPnL = groupData.totalPnL;
                     const groupExposure = groupData.totalExposure;
+                    const groupCostBasis = groupData.costBasis;
                     const groupPnlClass = groupPnL >= 0 ? 'pnl-positive' : 'pnl-negative';
                     const uncoveredShares = groupData.totalShares - groupData.coveredCallShares;
+                    const groupExposureVsNLV = currentNLV > 0
+                        ? formatPercent((groupExposure / currentNLV) * 100)
+                        : '0.00%';
+                    const groupCostBasisVsNLV = currentNLV > 0
+                        ? formatPercent((groupCostBasis / currentNLV) * 100)
+                        : '0.00%';
 
                     html += `
                         <tr class="summary-row">
@@ -1492,7 +1514,7 @@ header('Content-Type: text/html; charset=utf-8');
                                     <div>Total PnL: <span class="${groupPnlClass}">${formatCurrency(groupPnL)}</span></div>
                                     <div class="pos-value">Exposure: ${formatCurrency(groupExposure)}</div>
                                     <div style="font-size: 0.75rem; color: #666;">
-                                        ${currentNLV ? formatPercent((groupExposure / currentNLV) * 100) : '0.00%'} of NLV
+                                        ${groupExposureVsNLV} / ${groupCostBasisVsNLV}
                                     </div>
                                 </div>
                             </td>
