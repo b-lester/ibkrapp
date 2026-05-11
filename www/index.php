@@ -593,7 +593,7 @@ header('Content-Type: text/html; charset=utf-8');
         const pnlClass = totalPnL >= 0 ? 'pnl-positive' : 'pnl-negative';
         return `
             <tr class="summary-row">
-                <td colspan="12" class="summary-cell">
+                <td colspan="11" class="summary-cell">
                     <div class="summary-content">
                         <div>Expiration Premium (${formatExpiryCode(expiryCode)}): <span class="${pnlClass}">${formatCurrency(totalPnL)}</span></div>
                         <div>Collected: <span class="pos-value">${formatCurrency(totalCollectedPremium)}</span></div>
@@ -608,7 +608,7 @@ header('Content-Type: text/html; charset=utf-8');
         const pnlClass = totalPnL >= 0 ? 'pnl-positive' : 'pnl-negative';
         return `
             <tr class="summary-row">
-                <td colspan="12" class="summary-cell">
+                <td colspan="11" class="summary-cell">
                     <div class="summary-content">
                         <div><strong>Cumulative Premium:</strong> <span class="${pnlClass}">${formatCurrency(totalPnL)}</span></div>
                         <div>Collected: <span class="pos-value">${formatCurrency(totalCollectedPremium)}</span></div>
@@ -1388,12 +1388,11 @@ header('Content-Type: text/html; charset=utf-8');
                         <th>Ticker</th>
                         <th>Position</th>
                         <th>Expires</th>
-                        <th>Opened</th>
-                        <th>Age</th>
                         <th>Tgt</th>
                         <th>ROC</th>
                         <th>Avg</th>
                         <th>Last</th>
+                        <th>Cost</th>
                         <th>Value</th>
                         <th>PnL</th>
                         <th>Liability</th>
@@ -1483,7 +1482,7 @@ header('Content-Type: text/html; charset=utf-8');
             });
 
             sortedTags.forEach((tag, tagIndex) => {
-                if (tagIndex > 0) html += '<tr class="tag-spacer"><td colspan="12"></td></tr>';
+                if (tagIndex > 0) html += '<tr class="tag-spacer"><td colspan="11"></td></tr>';
 
                 const tickersInTag = tagGroups[tag];
                 tickersInTag.forEach(ticker => {
@@ -1508,7 +1507,7 @@ header('Content-Type: text/html; charset=utf-8');
 
                     html += `
                         <tr class="summary-row">
-                            <td colspan="12" class="summary-cell">
+                            <td colspan="11" class="summary-cell">
                                 <div class="summary-content">
                                     ${groupData.totalShares > 0 ? `<div>Uncovered: <strong>${uncoveredShares}</strong></div>` : ''}
                                     <div>Total PnL: <span class="${groupPnlClass}">${formatCurrency(groupPnL)}</span></div>
@@ -1562,7 +1561,7 @@ header('Content-Type: text/html; charset=utf-8');
             let cumulativeExpiryLiability = 0;
 
             sortedTags.forEach((tag, tagIndex) => {
-                if (tagIndex > 0) html += '<tr class="tag-spacer"><td colspan="12"></td></tr>';
+                if (tagIndex > 0) html += '<tr class="tag-spacer"><td colspan="11"></td></tr>';
                 let currentExpiryCode = null;
                 let currentExpiryPnL = 0;
                 let currentExpiryCollectedPremium = 0;
@@ -1626,7 +1625,6 @@ header('Content-Type: text/html; charset=utf-8');
         const daysToExpiry = getDaysToExpiry(pos);
         const pnlClass = pos.unrealizedPnl >= 0 ? 'pnl-positive' : 'pnl-negative';
         const openDateStr = currentOpenDates[pos.conid];
-        const openDateDisplay = openDateStr || '-';
 
         let ageDays = null;
         let targetReturn = null;
@@ -1693,14 +1691,11 @@ header('Content-Type: text/html; charset=utf-8');
                     ${posSubInfo}
                 </td>
                 <td>${daysToExpiry !== null ? daysToExpiry + 'd' : '-'}</td>
-                <td>
-                    <span class="open-date" onclick="editOpenDate('${pos.conid}', '${ticker}')">${openDateDisplay}</span>
-                </td>
-                <td>${ageDays !== null ? ageDays + 'd' : '-'}</td>
                 <td>${targetReturn !== null ? formatPercent(targetReturn) : '-'}</td>
                 <td>${roc !== null ? formatPercent(roc) : '-'}</td>
                 <td>${pos.avgPrice.toFixed(2)}</td>
                 <td>${pos.mktPrice.toFixed(2)}</td>
+                <td>${formatCurrency(costBasis)}</td>
                 <td>${formatCurrency(pos.mktValue)}</td>
                 <td class="${pnlClass}">
                     <div>${formatCurrency(pos.unrealizedPnl)}</div>
