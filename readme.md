@@ -27,4 +27,4 @@ This project follows the `../calakes` database pattern:
 `localconfig.php` is ignored by git. When configured, `www/marketdata.php`
 will cache historical market data responses in MySQL. Use `force=true` to
 bypass cache for a request, or `cacheTtl=SECONDS` to override the default
-15-minute freshness window.
+six-month freshness window.

@@ -222,6 +222,16 @@ header('Content-Type: text/html; charset=utf-8');
             flex-shrink: 0;
         }
 
+        .chart-bar-select {
+            min-height: 28px;
+            padding: 3px 6px;
+            color: var(--text);
+            background: var(--input);
+            border: 1px solid var(--panel-border);
+            border-radius: 6px;
+            font-size: 12px;
+        }
+
         .icon-button {
             width: 28px;
             height: 28px;
@@ -439,21 +449,39 @@ header('Content-Type: text/html; charset=utf-8');
         '2min': '2d',
         '3min': '3d',
         '5min': '5d',
-        '10min': '10d',
-        '15min': '15d',
+        '10min': '1w',
+        '15min': '2w',
         '30min': '1m',
-        '1h': '3m',
-        '2h': '6m',
-        '3h': '6m',
-        '4h': '1y',
-        '8h': '1y',
-        '1d': '1y',
-        '1w': '5y',
-        '1m': '15y'
+        '1h': '1m',
+        '2h': '2m',
+        '3h': '3m',
+        '4h': '3m',
+        '8h': '6m',
+        '1d': '3m',
+        '1w': '2y',
+        '1m': '10y'
     };
 
     let nextChartId = 1;
     const charts = new Map();
+    const workspaceStorageKey = 'ibkrChartWorkspace';
+    let isRestoringWorkspace = false;
+    let saveWorkspaceTimer = null;
+    const barOptions = [
+        ['1min', '1m'],
+        ['2min', '2m'],
+        ['3min', '3m'],
+        ['5min', '5m'],
+        ['10min', '10m'],
+        ['15min', '15m'],
+        ['30min', '30m'],
+        ['1h', '1h'],
+        ['2h', '2h'],
+        ['4h', '4h'],
+        ['1d', '1D'],
+        ['1w', '1W'],
+        ['1m', '1M']
+    ];
 
     function clampGridNumber(value, fallback = 2) {
         const number = Number.parseInt(value, 10);
@@ -468,12 +496,70 @@ header('Content-Type: text/html; charset=utf-8');
         gridColsInput.value = String(cols);
         chartGrid.style.setProperty('--grid-rows', String(rows));
         chartGrid.style.setProperty('--grid-cols', String(cols));
-        localStorage.setItem('ibkrChartGridRows', String(rows));
-        localStorage.setItem('ibkrChartGridCols', String(cols));
         for (const state of charts.values()) {
             state.chart.applyOptions({ autoSize: true });
             positionChunkLoaders(state);
         }
+        saveWorkspace();
+    }
+
+    function serializeChartState(state) {
+        return {
+            symbol: state.symbol,
+            conid: state.conid || null,
+            bar: state.bar,
+            period: state.targetPeriod,
+            secType: state.secType,
+            exchange: state.exchange,
+            outsideRth: state.outsideRth
+        };
+    }
+
+    function saveWorkspace() {
+        if (isRestoringWorkspace) return;
+        const workspace = {
+            rows: clampGridNumber(gridRowsInput.value, 1),
+            cols: clampGridNumber(gridColsInput.value, 1),
+            charts: Array.from(charts.values()).map(serializeChartState)
+        };
+        if (saveWorkspaceTimer !== null) {
+            window.clearTimeout(saveWorkspaceTimer);
+        }
+        saveWorkspaceTimer = window.setTimeout(async () => {
+            saveWorkspaceTimer = null;
+            try {
+                await fetch('preferences.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ chartWorkspace: workspace })
+                });
+            } catch (error) {
+                console.warn('Failed to save chart workspace', error);
+            }
+        }, 150);
+    }
+
+    async function loadWorkspace() {
+        try {
+            const response = await fetch('preferences.php');
+            if (!response.ok) throw new Error(`Preferences fetch failed: ${response.status}`);
+            const preferences = await response.json();
+            const workspace = preferences.chartWorkspace;
+            if (workspace && Array.isArray(workspace.charts)) return workspace;
+        } catch (error) {
+            console.warn('Failed to load chart workspace', error);
+        }
+
+        try {
+            const raw = localStorage.getItem(workspaceStorageKey);
+            if (!raw) return null;
+            const legacyWorkspace = JSON.parse(raw);
+            if (legacyWorkspace && Array.isArray(legacyWorkspace.charts)) return legacyWorkspace;
+        } catch (error) {
+            console.warn('Failed to load legacy chart workspace', error);
+        }
+
+        return null;
     }
 
     function setStatus(message, isError = false) {
@@ -510,19 +596,33 @@ header('Content-Type: text/html; charset=utf-8');
         return value * 31536000;
     }
 
+    function chunkSecondsForPeriod(period) {
+        const seconds = periodSeconds(period);
+        return Number.isFinite(seconds) && seconds > 0 ? seconds : 86400;
+    }
+
     function chunkPeriodForBar(bar) {
         return chunkPeriodByBar[bar] || '1m';
     }
 
     function requestPeriodForState(state) {
         const maxChunk = chunkPeriodForBar(state.bar);
-        return periodSeconds(state.targetPeriod) < periodSeconds(maxChunk) ? state.targetPeriod : maxChunk;
+        const targetSeconds = periodSeconds(state.targetPeriod);
+        const maxChunkSeconds = periodSeconds(maxChunk);
+        const minPeriodSeconds = barSeconds(state.bar) * 10;
+        if (targetSeconds < minPeriodSeconds) return maxChunk;
+        return targetSeconds < maxChunkSeconds ? state.targetPeriod : maxChunk;
     }
 
     function formatIbkrStartTime(unixSeconds) {
         const date = new Date(unixSeconds * 1000);
         const pad = (value) => String(value).padStart(2, '0');
         return `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}-${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`;
+    }
+
+    function chunkEndForTime(state, unixSeconds) {
+        const chunkSeconds = chunkSecondsForPeriod(state.chunkPeriod || requestPeriodForState(state));
+        return Math.floor(unixSeconds / chunkSeconds) * chunkSeconds;
     }
 
     function buildMarketDataUrl(state, options = {}) {
@@ -535,7 +635,9 @@ header('Content-Type: text/html; charset=utf-8');
             outsideRth: state.outsideRth ? 'true' : 'false'
         });
 
-        if (/^\d+$/.test(state.symbol)) {
+        if (state.conid) {
+            params.set('conid', state.conid);
+        } else if (/^\d+$/.test(state.symbol)) {
             params.set('conid', state.symbol);
         } else {
             params.set('symbol', state.symbol);
@@ -568,6 +670,12 @@ header('Content-Type: text/html; charset=utf-8');
                 Number.isFinite(bar.close));
     }
 
+    function barOptionsHtml(selectedBar) {
+        return barOptions
+            .map(([value, label]) => `<option value="${value}"${value === selectedBar ? ' selected' : ''}>${label}</option>`)
+            .join('');
+    }
+
     function createPanel(state) {
         const panel = document.createElement('section');
         panel.className = 'chart-panel initial-loading';
@@ -578,6 +686,9 @@ header('Content-Type: text/html; charset=utf-8');
                     <span class="chart-meta"></span>
                 </div>
                 <div class="chart-actions">
+                    <select class="chart-bar-select" title="Bar time period">
+                        ${barOptionsHtml(state.bar)}
+                    </select>
                     <button class="icon-button refresh-chart" type="button" title="Refresh">↻</button>
                     <button class="icon-button close-chart" type="button" title="Close">×</button>
                 </div>
@@ -660,18 +771,25 @@ header('Content-Type: text/html; charset=utf-8');
             loadingChunks: new Map(),
             requestedOlderEnds: new Set(),
             oldestRequestedTime: null,
+            nextOlderChunkEnd: null,
             pendingOlderLoad: null,
             lastRequestUrl: '',
             lastLoadReason: 'initial',
             targetPeriod: state.period,
             chunkPeriod: null,
+            conid: state.conid || null,
             secType: state.secType || 'STK',
             exchange: state.exchange || 'SMART',
             outsideRth: Boolean(state.outsideRth)
         };
 
         panel.querySelector('.close-chart').addEventListener('click', () => removeChart(chartState.id));
-        panel.querySelector('.refresh-chart').addEventListener('click', () => loadInitialChunk(chartState, true));
+        panel.querySelector('.refresh-chart').addEventListener('click', () => loadInitialChunk(chartState, false));
+        panel.querySelector('.chart-bar-select').addEventListener('change', (event) => {
+            chartState.bar = event.target.value;
+            saveWorkspace();
+            loadInitialChunk(chartState, false);
+        });
         chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
             positionChunkLoaders(chartState);
             handleVisibleRange(chartState, range);
@@ -680,6 +798,7 @@ header('Content-Type: text/html; charset=utf-8');
         chartGrid.appendChild(panel);
         charts.set(chartState.id, chartState);
         updatePanelHeader(chartState);
+        saveWorkspace();
         loadInitialChunk(chartState);
         return chartState;
     }
@@ -687,6 +806,10 @@ header('Content-Type: text/html; charset=utf-8');
     function updatePanelHeader(state) {
         state.panel.querySelector('.chart-symbol').textContent = state.symbol;
         state.panel.querySelector('.chart-meta').textContent = `${state.bar} candles · ${state.chunkPeriod || requestPeriodForState(state)} chunks · initial ${state.targetPeriod}`;
+        const barSelect = state.panel.querySelector('.chart-bar-select');
+        if (barSelect && barSelect.value !== state.bar) {
+            barSelect.value = state.bar;
+        }
         if (!state.candles.length) {
             state.panel.querySelector('.chart-range').textContent = 'No loaded bars yet';
         }
@@ -814,6 +937,11 @@ header('Content-Type: text/html; charset=utf-8');
                 throw new Error('No candles returned for this request.');
             }
 
+            if (data.request && data.request.conid) {
+                state.conid = String(data.request.conid);
+                saveWorkspace();
+            }
+
             state.candles = mode === 'prepend' ? mergeCandles(state.candles, candles) : candles;
             if (state.candles.length) {
                 state.oldestRequestedTime = state.candles[0].time;
@@ -842,6 +970,7 @@ header('Content-Type: text/html; charset=utf-8');
         state.chunkPeriod = requestPeriodForState(state);
         state.candles = [];
         state.oldestRequestedTime = null;
+        state.nextOlderChunkEnd = null;
         state.requestedOlderEnds.clear();
         for (const id of Array.from(state.loadingChunks.keys())) {
             removeChunkLoader(state, id);
@@ -852,16 +981,24 @@ header('Content-Type: text/html; charset=utf-8');
 
     function loadOlderChunk(state) {
         if (!state.candles.length || state.isInitialLoading || state.loadingChunks.size >= 3) return;
-        const earliest = state.oldestRequestedTime || state.candles[0].time;
-        const endBeforeEarliest = earliest - barSeconds(state.bar);
-        if (state.requestedOlderEnds.has(endBeforeEarliest)) return;
-        state.requestedOlderEnds.add(endBeforeEarliest);
-        state.oldestRequestedTime = endBeforeEarliest;
-        const startTime = formatIbkrStartTime(endBeforeEarliest);
-        const chunkId = `older-${endBeforeEarliest}`;
+        const earliestLoaded = state.candles[0].time;
+        if (state.nextOlderChunkEnd === null) {
+            state.nextOlderChunkEnd = chunkEndForTime(state, earliestLoaded - barSeconds(state.bar));
+        }
+
+        let chunkEnd = state.nextOlderChunkEnd;
+        while (state.requestedOlderEnds.has(chunkEnd)) {
+            chunkEnd -= chunkSecondsForPeriod(state.chunkPeriod);
+        }
+
+        state.requestedOlderEnds.add(chunkEnd);
+        state.nextOlderChunkEnd = chunkEnd - chunkSecondsForPeriod(state.chunkPeriod);
+        state.oldestRequestedTime = Math.min(state.oldestRequestedTime || earliestLoaded, chunkEnd);
+        const startTime = formatIbkrStartTime(chunkEnd);
+        const chunkId = `older-${chunkEnd}`;
         updateRequestDebug(state, `Loading older ${state.chunkPeriod} chunk ending before ${startTime}`);
         setStatus(`Loading older ${state.symbol} ${state.bar} bars…`);
-        return loadChunk(state, { reason: 'older chunk', mode: 'prepend', startTime, chunkId, targetTime: endBeforeEarliest });
+        return loadChunk(state, { reason: 'older chunk', mode: 'prepend', startTime, chunkId, targetTime: chunkEnd });
     }
 
     function handleVisibleRange(state, range) {
@@ -901,6 +1038,7 @@ header('Content-Type: text/html; charset=utf-8');
         state.chart.remove();
         state.panel.remove();
         charts.delete(id);
+        saveWorkspace();
         setStatus(charts.size ? 'Chart closed' : 'Ready');
     }
 
@@ -913,15 +1051,33 @@ header('Content-Type: text/html; charset=utf-8');
         if (event.key === 'Enter') addChartFromControls();
     });
 
-    gridRowsInput.value = localStorage.getItem('ibkrChartGridRows') || '1';
-    gridColsInput.value = localStorage.getItem('ibkrChartGridCols') || '1';
-    applyGridDimensions();
+    async function initializeCharts() {
+        const savedWorkspace = await loadWorkspace();
+        gridRowsInput.value = savedWorkspace?.rows || '1';
+        gridColsInput.value = savedWorkspace?.cols || '1';
+        applyGridDimensions();
 
-    if (!window.LightweightCharts) {
-        setStatus('Chart library failed to load.', true);
-    } else {
-        addChartFromControls();
+        if (!window.LightweightCharts) {
+            setStatus('Chart library failed to load.', true);
+        } else if (savedWorkspace && savedWorkspace.charts.length > 0) {
+            isRestoringWorkspace = true;
+            savedWorkspace.charts.forEach((savedChart) => createPanel({
+                symbol: normalizeSymbol(savedChart.symbol || 'NOW'),
+                conid: savedChart.conid || null,
+                bar: savedChart.bar || '5min',
+                period: savedChart.period || '1d',
+                secType: savedChart.secType || 'STK',
+                exchange: savedChart.exchange || 'SMART',
+                outsideRth: Boolean(savedChart.outsideRth)
+            }));
+            isRestoringWorkspace = false;
+            saveWorkspace();
+        } else {
+            addChartFromControls();
+        }
     }
+
+    initializeCharts();
 </script>
 </body>
 </html>

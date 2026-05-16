@@ -30,6 +30,7 @@ $GATEWAY_PORT = 5050;
 $GATEWAY_SCHEME = 'https';
 $BASE = "{$GATEWAY_SCHEME}://{$GATEWAY_HOST}:{$GATEWAY_PORT}/v1/api";
 $INSECURE_TLS = true;
+$DEFAULT_CACHE_TTL_SECONDS = 60 * 60 * 24 * 183; // Roughly six months.
 
 class GatewayHttpException extends RuntimeException {
     public int $statusCode;
@@ -291,6 +292,27 @@ function load_cached_history(mysqli $db, string $cacheKey, int $maxAgeSeconds): 
     ];
 }
 
+function find_cached_contract(mysqli $db, string $symbol, string $secType, ?string $exchange): ?string {
+    $stmt = $db->prepare("
+        SELECT conid
+        FROM marketdata_history_bars
+        WHERE symbol = ?
+          AND sec_type = ?
+          AND (? IS NULL OR exchange = ?)
+        ORDER BY fetched_at DESC
+        LIMIT 1
+    ");
+    if (!$stmt) return null;
+
+    $stmt->bind_param('ssss', $symbol, $secType, $exchange, $exchange);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    $row = $result ? $result->fetch_assoc() : null;
+    $stmt->close();
+
+    return $row && isset($row['conid']) ? (string)$row['conid'] : null;
+}
+
 function save_cached_history(
     mysqli $db,
     string $cacheKey,
@@ -434,7 +456,7 @@ try {
     $startTime = request_string($input, 'startTime');
     $outsideRth = request_bool($input, 'outsideRth', false);
     $force = request_bool($input, 'force', false);
-    $cacheTtl = request_int($input, 'cacheTtl', 900, 0, 86400);
+    $cacheTtl = request_int($input, 'cacheTtl', $DEFAULT_CACHE_TTL_SECONDS, 0, $DEFAULT_CACHE_TTL_SECONDS);
     $source = request_string($input, 'source', 'Trades');
     $secType = request_string($input, 'secType', 'STK');
 
@@ -467,6 +489,55 @@ try {
         throw new InvalidArgumentException('Invalid startTime. Use YYYYMMDD-HH:mm:ss.');
     }
 
+    $db = get_optional_db_connection();
+    $resolvedContract = null;
+
+    if ($db !== null && $conid === null && $symbol !== null) {
+        $cachedConid = find_cached_contract($db, $symbol, $secType, $exchange);
+        if ($cachedConid !== null) {
+            $conid = $cachedConid;
+            $resolvedContract = [
+                'conid' => $cachedConid,
+                'symbol' => $symbol,
+                'source' => 'cache',
+            ];
+        }
+    }
+
+    if ($db !== null && $conid !== null && !$force) {
+        $cacheKey = marketdata_cache_key([
+            'conid' => $conid,
+            'exchange' => $exchange,
+            'period' => $period,
+            'bar' => $bar,
+            'startTime' => $startTime,
+            'outsideRth' => $outsideRth,
+            'source' => $source,
+        ]);
+
+        $cached = load_cached_history($db, $cacheKey, $cacheTtl);
+        if ($cached !== null) {
+            echo json_encode(
+                format_history_response($cached['payload'], [
+                    'conid' => $conid,
+                    'exchange' => $exchange,
+                    'period' => $period,
+                    'bar' => $bar,
+                    'startTime' => $startTime,
+                    'outsideRth' => $outsideRth,
+                    'source' => $source,
+                    'symbol' => $symbol,
+                    'secType' => $secType,
+                    'resolvedContract' => $resolvedContract,
+                    'force' => $force,
+                    'cacheTtl' => $cacheTtl,
+                ], true, $cached['fetched_at'], $cacheKey, true),
+                JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES
+            );
+            exit;
+        }
+    }
+
     $cookieJar = sys_get_temp_dir() . '/ibkr_cpg_cookiejar.txt';
 
     $auth = curl_json('GET', "{$BASE}/iserver/auth/status", $INSECURE_TLS, $cookieJar);
@@ -483,7 +554,6 @@ try {
     // Keeps the brokerage session warm and mirrors the preflight style used by other /iserver calls.
     curl_json('GET', "{$BASE}/iserver/accounts", $INSECURE_TLS, $cookieJar);
 
-    $resolvedContract = null;
     if ($conid === null && $symbol !== null) {
         $resolvedContract = resolve_symbol($BASE, $symbol, $secType, $INSECURE_TLS, $cookieJar);
         $conid = (string)$resolvedContract['conid'];
@@ -514,7 +584,6 @@ try {
         'cacheTtl' => $cacheTtl,
     ];
 
-    $db = get_optional_db_connection();
     if ($db !== null && !$force) {
         $cached = load_cached_history($db, $cacheKey, $cacheTtl);
         if ($cached !== null) {
