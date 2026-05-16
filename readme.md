@@ -20,7 +20,8 @@ This project follows the `../calakes` database pattern:
 2. Fill in the database host, username, password, and database name.
 3. Review pending schema changes in `maint/golive_plan.sql`.
 4. Apply database schema changes with `php maint/deploy.php`. This does not
-   deploy PHP code; it only applies `golive_plan.sql`, clears it, and refreshes
+   deploy PHP code; it SSHes to the remote MySQL host, applies
+   `golive_plan.sql`, clears it locally, and refreshes
    `maint/schema_dump_latest.sql`.
 
 `localconfig.php` is ignored by git. When configured, `www/marketdata.php`

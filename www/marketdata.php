@@ -241,31 +241,52 @@ function marketdata_cache_key(array $parts): string {
 
 function load_cached_history(mysqli $db, string $cacheKey, int $maxAgeSeconds): ?array {
     $stmt = $db->prepare("
-        SELECT response_json, fetched_at
-        FROM marketdata_history_cache
+        SELECT
+            bar_time,
+            bar_time_iso,
+            open_price,
+            high_price,
+            low_price,
+            close_price,
+            volume,
+            fetched_at
+        FROM marketdata_history_bars
         WHERE cache_key = ?
-        LIMIT 1
+        ORDER BY bar_time ASC
     ");
     if (!$stmt) return null;
 
     $stmt->bind_param('s', $cacheKey);
     $stmt->execute();
     $result = $stmt->get_result();
-    $row = $result ? $result->fetch_assoc() : null;
+
+    $bars = [];
+    $fetchedAt = null;
+    while ($result && ($row = $result->fetch_assoc())) {
+        $fetchedAt = $fetchedAt === null ? (int)$row['fetched_at'] : min($fetchedAt, (int)$row['fetched_at']);
+        $bars[] = [
+            't' => (int)$row['bar_time'],
+            'isoTime' => (string)$row['bar_time_iso'],
+            'o' => $row['open_price'] !== null ? (float)$row['open_price'] : null,
+            'h' => $row['high_price'] !== null ? (float)$row['high_price'] : null,
+            'l' => $row['low_price'] !== null ? (float)$row['low_price'] : null,
+            'c' => $row['close_price'] !== null ? (float)$row['close_price'] : null,
+            'v' => $row['volume'] !== null ? (float)$row['volume'] : null,
+        ];
+    }
     $stmt->close();
 
-    if (!$row) return null;
+    if (empty($bars) || $fetchedAt === null) return null;
 
-    $fetchedAt = (int)$row['fetched_at'];
     if ($maxAgeSeconds > 0 && (time() - $fetchedAt) > $maxAgeSeconds) {
         return null;
     }
 
-    $payload = json_decode((string)$row['response_json'], true);
-    if (!is_array($payload)) return null;
-
     return [
-        'payload' => $payload,
+        'payload' => [
+            'data' => $bars,
+            'points' => count($bars),
+        ],
         'fetched_at' => $fetchedAt,
     ];
 }
@@ -284,17 +305,17 @@ function save_cached_history(
     string $source,
     array $history
 ): void {
-    $responseJson = json_encode($history, JSON_UNESCAPED_SLASHES);
-    if ($responseJson === false) return;
+    $rawBars = is_array($history['data'] ?? null) ? $history['data'] : [];
+    if (empty($rawBars)) return;
 
     $fetchedAt = time();
     $outsideRthInt = $outsideRth ? 1 : 0;
     $conidInt = (int)$conid;
 
     $stmt = $db->prepare("
-        INSERT INTO marketdata_history_cache
-            (cache_key, conid, symbol, sec_type, exchange, period_value, bar_value, start_time, outside_rth, source_value, response_json, fetched_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO marketdata_history_bars
+            (cache_key, conid, symbol, sec_type, exchange, period_value, bar_value, start_time, outside_rth, source_value, bar_time, bar_time_iso, open_price, high_price, low_price, close_price, volume, fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
             conid = VALUES(conid),
             symbol = VALUES(symbol),
@@ -305,27 +326,51 @@ function save_cached_history(
             start_time = VALUES(start_time),
             outside_rth = VALUES(outside_rth),
             source_value = VALUES(source_value),
-            response_json = VALUES(response_json),
+            bar_time_iso = VALUES(bar_time_iso),
+            open_price = VALUES(open_price),
+            high_price = VALUES(high_price),
+            low_price = VALUES(low_price),
+            close_price = VALUES(close_price),
+            volume = VALUES(volume),
             fetched_at = VALUES(fetched_at)
     ");
     if (!$stmt) return;
 
-    $stmt->bind_param(
-        'sissssssissi',
-        $cacheKey,
-        $conidInt,
-        $symbol,
-        $secType,
-        $exchange,
-        $period,
-        $bar,
-        $startTime,
-        $outsideRthInt,
-        $source,
-        $responseJson,
-        $fetchedAt
-    );
-    $stmt->execute();
+    foreach ($rawBars as $rawBar) {
+        $barTime = isset($rawBar['t']) ? (int)$rawBar['t'] : 0;
+        if ($barTime <= 0) continue;
+
+        $barTimeIso = gmdate('c', (int)floor($barTime / 1000));
+        $open = isset($rawBar['o']) ? (float)$rawBar['o'] : null;
+        $high = isset($rawBar['h']) ? (float)$rawBar['h'] : null;
+        $low = isset($rawBar['l']) ? (float)$rawBar['l'] : null;
+        $close = isset($rawBar['c']) ? (float)$rawBar['c'] : null;
+        $volume = isset($rawBar['v']) ? (float)$rawBar['v'] : null;
+
+        $stmt->bind_param(
+            'sissssssisisdddddi',
+            $cacheKey,
+            $conidInt,
+            $symbol,
+            $secType,
+            $exchange,
+            $period,
+            $bar,
+            $startTime,
+            $outsideRthInt,
+            $source,
+            $barTime,
+            $barTimeIso,
+            $open,
+            $high,
+            $low,
+            $close,
+            $volume,
+            $fetchedAt
+        );
+        $stmt->execute();
+    }
+
     $stmt->close();
 }
 
