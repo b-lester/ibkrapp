@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS marketdata_history_cache (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    cache_key CHAR(64) NOT NULL,
+    conid BIGINT UNSIGNED NOT NULL,
+    symbol VARCHAR(32) DEFAULT NULL,
+    sec_type VARCHAR(16) NOT NULL DEFAULT 'STK',
+    exchange VARCHAR(32) DEFAULT NULL,
+    period_value VARCHAR(16) NOT NULL,
+    bar_value VARCHAR(16) NOT NULL,
+    start_time VARCHAR(32) DEFAULT NULL,
+    outside_rth TINYINT(1) NOT NULL DEFAULT 0,
+    source_value VARCHAR(32) NOT NULL DEFAULT 'Trades',
+    response_json MEDIUMTEXT NOT NULL,
+    fetched_at INT UNSIGNED NOT NULL,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY marketdata_history_cache_key (cache_key),
+    KEY marketdata_history_lookup (conid, period_value, bar_value, outside_rth, source_value),
+    KEY marketdata_history_fetched_at (fetched_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

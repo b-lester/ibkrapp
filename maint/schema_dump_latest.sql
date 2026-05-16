@@ -1,0 +1,3 @@
+-- Schema dump has not been generated yet.
+-- Do not update this file manually after schema migrations.
+-- Run php maint/dump_schema.php after applying migrations.
