@@ -511,7 +511,10 @@ header('Content-Type: text/html; charset=utf-8');
             period: state.targetPeriod,
             secType: state.secType,
             exchange: state.exchange,
-            outsideRth: state.outsideRth
+            outsideRth: state.outsideRth,
+            viewport: {
+                timeRange: state.savedTimeRange || null
+            }
         };
     }
 
@@ -670,6 +673,70 @@ header('Content-Type: text/html; charset=utf-8');
                 Number.isFinite(bar.close));
     }
 
+    function sanitizeTimeRange(range) {
+        if (!range) return null;
+        const from = Number(range.from);
+        const to = Number(range.to);
+        if (!Number.isFinite(from) || !Number.isFinite(to) || from >= to) return null;
+        return { from, to };
+    }
+
+    function timeRangeFromSavedChart(savedChart) {
+        return sanitizeTimeRange(savedChart?.viewport?.timeRange || savedChart?.timeRange || null);
+    }
+
+    function captureTimeRange(state) {
+        if (!state.candles.length || !state.chart.timeScale().getVisibleRange) return;
+        const timeRange = sanitizeTimeRange(state.chart.timeScale().getVisibleRange());
+        if (timeRange) state.savedTimeRange = timeRange;
+    }
+
+    function scheduleTimeRangeSave(state) {
+        if (isRestoringWorkspace || state.isRestoringTimeRange || !state.candles.length) return;
+        if (state.timeRangeSaveTimer !== null) {
+            window.clearTimeout(state.timeRangeSaveTimer);
+        }
+        state.timeRangeSaveTimer = window.setTimeout(() => {
+            state.timeRangeSaveTimer = null;
+            captureTimeRange(state);
+            saveWorkspace();
+        }, 250);
+    }
+
+    function restoreSavedTimeRange(state) {
+        if (!state.savedTimeRange) return false;
+        try {
+            state.chart.timeScale().setVisibleRange(state.savedTimeRange);
+            return true;
+        } catch (error) {
+            console.warn('Failed to restore chart time range', error);
+            return false;
+        }
+    }
+
+    function needsSavedTimeRangeBackfill(state) {
+        return Boolean(
+            state.savedTimeRange &&
+            state.candles.length &&
+            state.candles[0].time > state.savedTimeRange.from
+        );
+    }
+
+    function ensureSavedTimeRangeLoaded(state) {
+        if (!needsSavedTimeRangeBackfill(state)) return;
+        if (state.isInitialLoading || state.loadingChunks.size >= 3) return;
+        loadOlderChunk(state);
+    }
+
+    function finishTimeRangeRestore(state) {
+        if (!state.isRestoringTimeRange) return;
+        state.isRestoringTimeRange = false;
+        window.setTimeout(() => {
+            captureTimeRange(state);
+            saveWorkspace();
+        }, 300);
+    }
+
     function barOptionsHtml(selectedBar) {
         return barOptions
             .map(([value, label]) => `<option value="${value}"${value === selectedBar ? ' selected' : ''}>${label}</option>`)
@@ -773,6 +840,7 @@ header('Content-Type: text/html; charset=utf-8');
             oldestRequestedTime: null,
             nextOlderChunkEnd: null,
             pendingOlderLoad: null,
+            timeRangeSaveTimer: null,
             lastRequestUrl: '',
             lastLoadReason: 'initial',
             targetPeriod: state.period,
@@ -780,19 +848,24 @@ header('Content-Type: text/html; charset=utf-8');
             conid: state.conid || null,
             secType: state.secType || 'STK',
             exchange: state.exchange || 'SMART',
-            outsideRth: Boolean(state.outsideRth)
+            outsideRth: Boolean(state.outsideRth),
+            savedTimeRange: sanitizeTimeRange(state.savedTimeRange),
+            isRestoringTimeRange: Boolean(sanitizeTimeRange(state.savedTimeRange))
         };
 
         panel.querySelector('.close-chart').addEventListener('click', () => removeChart(chartState.id));
         panel.querySelector('.refresh-chart').addEventListener('click', () => loadInitialChunk(chartState, false));
         panel.querySelector('.chart-bar-select').addEventListener('change', (event) => {
             chartState.bar = event.target.value;
+            chartState.savedTimeRange = null;
+            chartState.isRestoringTimeRange = false;
             saveWorkspace();
             loadInitialChunk(chartState, false);
         });
         chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
             positionChunkLoaders(chartState);
             handleVisibleRange(chartState, range);
+            scheduleTimeRangeSave(chartState);
         });
 
         chartGrid.appendChild(panel);
@@ -906,6 +979,7 @@ header('Content-Type: text/html; charset=utf-8');
         const startTime = options.startTime || null;
         const chunkId = options.chunkId || `${reason}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
         const targetTime = options.targetTime || null;
+        let shouldBackfillSavedRange = false;
 
         if (mode === 'replace' && state.isInitialLoading) {
             updateRequestDebug(state, `Ignored ${reason}: initial load already in progress`);
@@ -948,8 +1022,13 @@ header('Content-Type: text/html; charset=utf-8');
             }
             state.series.setData(state.candles);
             if (mode === 'replace') {
-                state.chart.timeScale().fitContent();
+                if (!restoreSavedTimeRange(state)) {
+                    state.chart.timeScale().fitContent();
+                }
+            } else {
+                restoreSavedTimeRange(state);
             }
+            shouldBackfillSavedRange = needsSavedTimeRangeBackfill(state);
             state.panel.querySelector('.chart-range').textContent = describeRange(state);
             updateCachePill(state, data.cache);
             setPanelMessage(state, '');
@@ -957,12 +1036,18 @@ header('Content-Type: text/html; charset=utf-8');
             setStatus(`${state.symbol} ${state.bar} ${state.chunkPeriod} chunk loaded in ${elapsedMs}ms (${data.cache?.hit ? 'cache' : 'IBKR'})`);
         } catch (error) {
             console.error(error);
+            state.isRestoringTimeRange = false;
             setPanelMessage(state, error.message, true);
             updateRequestDebug(state, `Failed ${state.lastLoadReason}: ${state.lastRequestUrl}`);
             setStatus(error.message, true);
         } finally {
             if (mode === 'replace') state.isInitialLoading = false;
             removeChunkLoader(state, chunkId);
+            if (shouldBackfillSavedRange) {
+                window.setTimeout(() => ensureSavedTimeRangeLoaded(state), 0);
+            } else {
+                finishTimeRangeRestore(state);
+            }
         }
     }
 
@@ -1035,6 +1120,9 @@ header('Content-Type: text/html; charset=utf-8');
     function removeChart(id) {
         const state = charts.get(id);
         if (!state) return;
+        if (state.timeRangeSaveTimer !== null) {
+            window.clearTimeout(state.timeRangeSaveTimer);
+        }
         state.chart.remove();
         state.panel.remove();
         charts.delete(id);
@@ -1068,7 +1156,8 @@ header('Content-Type: text/html; charset=utf-8');
                 period: savedChart.period || '1d',
                 secType: savedChart.secType || 'STK',
                 exchange: savedChart.exchange || 'SMART',
-                outsideRth: Boolean(savedChart.outsideRth)
+                outsideRth: Boolean(savedChart.outsideRth),
+                savedTimeRange: timeRangeFromSavedChart(savedChart)
             }));
             isRestoringWorkspace = false;
             saveWorkspace();
