@@ -1,0 +1,927 @@
+<?php
+header('Content-Type: text/html; charset=utf-8');
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IBKR Charts</title>
+    <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        :root {
+            --bg: #101417;
+            --panel: #161c20;
+            --panel-border: #2c363d;
+            --text: #e6edf0;
+            --muted: #91a1aa;
+            --accent: #2f8f83;
+            --danger: #c94d57;
+            --input: #0d1114;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            height: 100vh;
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            font-size: 14px;
+        }
+
+        button,
+        input,
+        select {
+            font: inherit;
+        }
+
+        .app-shell {
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .topbar {
+            min-height: 52px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 8px 12px;
+            border-bottom: 1px solid var(--panel-border);
+            background: #12181c;
+            flex-wrap: wrap;
+        }
+
+        .brand {
+            font-weight: 700;
+            letter-spacing: 0;
+            margin-right: 8px;
+        }
+
+        .nav-link {
+            color: var(--muted);
+            text-decoration: none;
+            border: 1px solid var(--panel-border);
+            border-radius: 6px;
+            padding: 7px 10px;
+            line-height: 1;
+        }
+
+        .nav-link:hover {
+            color: var(--text);
+            border-color: #45545e;
+        }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            min-width: 0;
+        }
+
+        .control-group label {
+            color: var(--muted);
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        input,
+        select {
+            color: var(--text);
+            background: var(--input);
+            border: 1px solid var(--panel-border);
+            border-radius: 6px;
+            min-height: 34px;
+            padding: 6px 8px;
+            outline: none;
+        }
+
+        input:focus,
+        select:focus {
+            border-color: var(--accent);
+        }
+
+        #symbol-input {
+            width: 110px;
+            text-transform: uppercase;
+        }
+
+        .button {
+            min-height: 34px;
+            border: 1px solid var(--panel-border);
+            border-radius: 6px;
+            color: var(--text);
+            background: #1d262b;
+            padding: 6px 11px;
+            cursor: pointer;
+        }
+
+        .button:hover {
+            border-color: #45545e;
+            background: #243039;
+        }
+
+        .button.primary {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: #f4fffb;
+            font-weight: 700;
+        }
+
+        .status-bar {
+            min-height: 28px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 5px 12px;
+            color: var(--muted);
+            border-bottom: 1px solid var(--panel-border);
+            background: #0f1417;
+            font-size: 12px;
+        }
+
+        .status-bar.error {
+            color: #ff9aa2;
+        }
+
+        .charts-grid {
+            flex: 1;
+            min-height: 0;
+            display: grid;
+            grid-template-columns: repeat(var(--grid-cols, 1), minmax(0, 1fr));
+            grid-template-rows: repeat(var(--grid-rows, 1), minmax(0, 1fr));
+            grid-auto-rows: minmax(260px, 1fr);
+            gap: 10px;
+            padding: 10px;
+            align-content: stretch;
+            overflow: auto;
+        }
+
+        .chart-panel {
+            min-height: 0;
+            border: 1px solid var(--panel-border);
+            background: var(--panel);
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .charts-grid:has(.chart-panel:only-child) {
+            grid-template-columns: 1fr;
+            grid-auto-rows: 1fr;
+        }
+
+        .layout-number {
+            width: 58px;
+            min-height: 32px;
+        }
+
+        .chart-header {
+            min-height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            padding: 7px 9px;
+            border-bottom: 1px solid var(--panel-border);
+            background: #141b1f;
+        }
+
+        .chart-title {
+            display: flex;
+            align-items: baseline;
+            gap: 8px;
+            min-width: 0;
+        }
+
+        .chart-symbol {
+            font-size: 15px;
+            font-weight: 800;
+            white-space: nowrap;
+        }
+
+        .chart-meta {
+            color: var(--muted);
+            font-size: 12px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .chart-actions {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            flex-shrink: 0;
+        }
+
+        .icon-button {
+            width: 28px;
+            height: 28px;
+            display: inline-grid;
+            place-items: center;
+            border-radius: 6px;
+            border: 1px solid var(--panel-border);
+            color: var(--muted);
+            background: transparent;
+            cursor: pointer;
+        }
+
+        .icon-button:hover {
+            color: var(--text);
+            border-color: #45545e;
+            background: #1d262b;
+        }
+
+        .chart-area {
+            position: relative;
+            flex: 1;
+            min-height: 0;
+        }
+
+        .chart-canvas {
+            position: absolute;
+            inset: 0;
+        }
+
+        .chart-message {
+            position: absolute;
+            inset: 0;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            padding: 16px;
+            color: var(--muted);
+            text-align: center;
+            white-space: pre-line;
+            pointer-events: none;
+            background: rgba(22, 28, 32, 0.72);
+            z-index: 2;
+        }
+
+        .chart-panel.initial-loading .chart-message,
+        .chart-panel.error .chart-message {
+            display: flex;
+        }
+
+        .chart-panel.error .chart-message {
+            color: #ff9aa2;
+        }
+
+        .chunk-loaders {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            z-index: 3;
+        }
+
+        .chunk-loader {
+            position: absolute;
+            top: 12px;
+            max-width: min(280px, calc(100% - 24px));
+            border: 1px solid #45626a;
+            border-radius: 6px;
+            background: rgba(13, 17, 20, 0.9);
+            color: #d5e7ed;
+            padding: 5px 8px;
+            font-size: 12px;
+            line-height: 1.25;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.28);
+        }
+
+        .chart-footer {
+            min-height: 48px;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            align-items: center;
+            gap: 8px;
+            padding: 5px 9px;
+            border-top: 1px solid var(--panel-border);
+            color: var(--muted);
+            font-size: 12px;
+        }
+
+        .chart-debug {
+            min-width: 0;
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .chart-range,
+        .chart-request {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .chart-request {
+            color: #a8b6bd;
+        }
+
+        .cache-pill {
+            border: 1px solid var(--panel-border);
+            border-radius: 999px;
+            padding: 2px 8px;
+            white-space: nowrap;
+        }
+
+        .cache-pill.hit {
+            color: #a7ddc7;
+            border-color: #2f6f5c;
+        }
+
+        .cache-pill.miss {
+            color: #f2c38f;
+            border-color: #7f5b2c;
+        }
+
+        @media (max-width: 680px) {
+            .topbar {
+                align-items: stretch;
+            }
+
+            .control-group {
+                flex: 1 1 140px;
+            }
+
+            .control-group input,
+            .control-group select {
+                width: 100%;
+            }
+
+            .button.primary {
+                flex: 1 1 100%;
+            }
+
+            .chart-panel {
+                min-height: 320px;
+            }
+        }
+    </style>
+</head>
+<body>
+<div class="app-shell">
+    <div class="topbar">
+        <div class="brand">IBKR Charts</div>
+        <a class="nav-link" href="index.php">Positions</a>
+        <div class="control-group">
+            <label for="symbol-input">Symbol</label>
+            <input id="symbol-input" value="NOW" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="control-group">
+            <label for="bar-select">Bar</label>
+            <select id="bar-select">
+                <option value="1min">1m</option>
+                <option value="2min">2m</option>
+                <option value="3min">3m</option>
+                <option value="5min" selected>5m</option>
+                <option value="10min">10m</option>
+                <option value="15min">15m</option>
+                <option value="30min">30m</option>
+                <option value="1h">1h</option>
+                <option value="2h">2h</option>
+                <option value="4h">4h</option>
+                <option value="1d">1D</option>
+                <option value="1w">1W</option>
+                <option value="1m">1M</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label for="range-select">Initial</label>
+            <select id="range-select">
+                <option value="1d" selected>1D</option>
+                <option value="1w">1W</option>
+                <option value="1m">1M</option>
+                <option value="3m">3M</option>
+                <option value="6m">6M</option>
+                <option value="1y">1Y</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label for="grid-rows-input">Rows</label>
+            <input id="grid-rows-input" class="layout-number" type="number" min="1" max="12" step="1" value="1">
+        </div>
+        <div class="control-group">
+            <label for="grid-cols-input">Cols</label>
+            <input id="grid-cols-input" class="layout-number" type="number" min="1" max="12" step="1" value="1">
+        </div>
+        <button id="add-chart-button" class="button primary" type="button">Add Chart</button>
+    </div>
+    <div id="status-bar" class="status-bar">Ready</div>
+    <div id="charts-grid" class="charts-grid"></div>
+</div>
+
+<script>
+    const chartGrid = document.getElementById('charts-grid');
+    const statusBar = document.getElementById('status-bar');
+    const addChartButton = document.getElementById('add-chart-button');
+    const symbolInput = document.getElementById('symbol-input');
+    const barSelect = document.getElementById('bar-select');
+    const rangeSelect = document.getElementById('range-select');
+    const gridRowsInput = document.getElementById('grid-rows-input');
+    const gridColsInput = document.getElementById('grid-cols-input');
+
+    const upColor = '#1fa774';
+    const downColor = '#dc4c5a';
+    const chunkPeriodByBar = {
+        '1min': '1d',
+        '2min': '2d',
+        '3min': '3d',
+        '5min': '5d',
+        '10min': '10d',
+        '15min': '15d',
+        '30min': '1m',
+        '1h': '3m',
+        '2h': '6m',
+        '3h': '6m',
+        '4h': '1y',
+        '8h': '1y',
+        '1d': '1y',
+        '1w': '5y',
+        '1m': '15y'
+    };
+
+    let nextChartId = 1;
+    const charts = new Map();
+
+    function clampGridNumber(value, fallback = 2) {
+        const number = Number.parseInt(value, 10);
+        if (!Number.isFinite(number)) return fallback;
+        return Math.max(1, Math.min(12, number));
+    }
+
+    function applyGridDimensions() {
+        const rows = clampGridNumber(gridRowsInput.value);
+        const cols = clampGridNumber(gridColsInput.value);
+        gridRowsInput.value = String(rows);
+        gridColsInput.value = String(cols);
+        chartGrid.style.setProperty('--grid-rows', String(rows));
+        chartGrid.style.setProperty('--grid-cols', String(cols));
+        localStorage.setItem('ibkrChartGridRows', String(rows));
+        localStorage.setItem('ibkrChartGridCols', String(cols));
+        for (const state of charts.values()) {
+            state.chart.applyOptions({ autoSize: true });
+            positionChunkLoaders(state);
+        }
+    }
+
+    function setStatus(message, isError = false) {
+        statusBar.textContent = message;
+        statusBar.classList.toggle('error', isError);
+    }
+
+    function normalizeSymbol(value) {
+        return value.trim().toUpperCase();
+    }
+
+    function barSeconds(bar) {
+        const match = String(bar).match(/^(\d+)(min|h|d|w|m)$/);
+        if (!match) return 60;
+        const value = Number(match[1]);
+        const unit = match[2];
+        if (unit === 'min') return value * 60;
+        if (unit === 'h') return value * 3600;
+        if (unit === 'd') return value * 86400;
+        if (unit === 'w') return value * 604800;
+        return value * 2592000;
+    }
+
+    function periodSeconds(period) {
+        const match = String(period).match(/^(\d+)(min|h|d|w|m|y)$/);
+        if (!match) return Number.MAX_SAFE_INTEGER;
+        const value = Number(match[1]);
+        const unit = match[2];
+        if (unit === 'min') return value * 60;
+        if (unit === 'h') return value * 3600;
+        if (unit === 'd') return value * 86400;
+        if (unit === 'w') return value * 604800;
+        if (unit === 'm') return value * 2592000;
+        return value * 31536000;
+    }
+
+    function chunkPeriodForBar(bar) {
+        return chunkPeriodByBar[bar] || '1m';
+    }
+
+    function requestPeriodForState(state) {
+        const maxChunk = chunkPeriodForBar(state.bar);
+        return periodSeconds(state.targetPeriod) < periodSeconds(maxChunk) ? state.targetPeriod : maxChunk;
+    }
+
+    function formatIbkrStartTime(unixSeconds) {
+        const date = new Date(unixSeconds * 1000);
+        const pad = (value) => String(value).padStart(2, '0');
+        return `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}-${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`;
+    }
+
+    function buildMarketDataUrl(state, options = {}) {
+        const force = Boolean(options.force);
+        const startTime = options.startTime || null;
+        const params = new URLSearchParams({
+            bar: state.bar,
+            period: state.chunkPeriod,
+            exchange: state.exchange,
+            outsideRth: state.outsideRth ? 'true' : 'false'
+        });
+
+        if (/^\d+$/.test(state.symbol)) {
+            params.set('conid', state.symbol);
+        } else {
+            params.set('symbol', state.symbol);
+            params.set('secType', state.secType);
+        }
+
+        if (force) params.set('force', 'true');
+        if (startTime) params.set('startTime', startTime);
+        return `marketdata.php?${params.toString()}`;
+    }
+
+    function formatCandle(bar) {
+        const timestampMs = Number(bar.time || bar.t || 0);
+        return {
+            time: Math.floor(timestampMs / 1000),
+            open: Number(bar.open ?? bar.o),
+            high: Number(bar.high ?? bar.h),
+            low: Number(bar.low ?? bar.l),
+            close: Number(bar.close ?? bar.c)
+        };
+    }
+
+    function validCandles(bars) {
+        return bars
+            .map(formatCandle)
+            .filter((bar) => Number.isFinite(bar.time) &&
+                Number.isFinite(bar.open) &&
+                Number.isFinite(bar.high) &&
+                Number.isFinite(bar.low) &&
+                Number.isFinite(bar.close));
+    }
+
+    function createPanel(state) {
+        const panel = document.createElement('section');
+        panel.className = 'chart-panel initial-loading';
+        panel.innerHTML = `
+            <div class="chart-header">
+                <div class="chart-title">
+                    <span class="chart-symbol"></span>
+                    <span class="chart-meta"></span>
+                </div>
+                <div class="chart-actions">
+                    <button class="icon-button refresh-chart" type="button" title="Refresh">↻</button>
+                    <button class="icon-button close-chart" type="button" title="Close">×</button>
+                </div>
+            </div>
+            <div class="chart-area">
+                <div class="chart-canvas"></div>
+                <div class="chunk-loaders"></div>
+                <div class="chart-message">Loading…</div>
+            </div>
+            <div class="chart-footer">
+                <div class="chart-debug">
+                    <span class="chart-range"></span>
+                    <span class="chart-request"></span>
+                </div>
+                <span class="cache-pill">Cache</span>
+            </div>
+        `;
+
+        const canvas = panel.querySelector('.chart-canvas');
+        const chart = LightweightCharts.createChart(canvas, {
+            autoSize: true,
+            layout: {
+                background: { type: 'solid', color: '#161c20' },
+                textColor: '#b9c6cc',
+                fontSize: 12
+            },
+            grid: {
+                vertLines: { color: '#263038' },
+                horzLines: { color: '#263038' }
+            },
+            rightPriceScale: {
+                borderColor: '#34424a',
+                autoScale: true,
+                scaleMargins: { top: 0.12, bottom: 0.12 }
+            },
+            timeScale: {
+                borderColor: '#34424a',
+                timeVisible: true,
+                secondsVisible: false,
+                rightOffset: 8,
+                barSpacing: 8,
+                minBarSpacing: 1
+            },
+            crosshair: {
+                mode: LightweightCharts.CrosshairMode.Normal
+            },
+            handleScale: {
+                axisPressedMouseMove: {
+                    time: true,
+                    price: true
+                },
+                mouseWheel: true,
+                pinch: true
+            },
+            handleScroll: {
+                mouseWheel: true,
+                pressedMouseMove: true,
+                horzTouchDrag: true,
+                vertTouchDrag: false
+            }
+        });
+
+        const series = chart.addCandlestickSeries({
+            upColor,
+            downColor,
+            borderUpColor: upColor,
+            borderDownColor: downColor,
+            wickUpColor: upColor,
+            wickDownColor: downColor
+        });
+
+        const chartState = {
+            ...state,
+            id: nextChartId++,
+            panel,
+            chart,
+            series,
+            candles: [],
+            isInitialLoading: false,
+            loadingChunks: new Map(),
+            requestedOlderEnds: new Set(),
+            oldestRequestedTime: null,
+            pendingOlderLoad: null,
+            lastRequestUrl: '',
+            lastLoadReason: 'initial',
+            targetPeriod: state.period,
+            chunkPeriod: null,
+            secType: state.secType || 'STK',
+            exchange: state.exchange || 'SMART',
+            outsideRth: Boolean(state.outsideRth)
+        };
+
+        panel.querySelector('.close-chart').addEventListener('click', () => removeChart(chartState.id));
+        panel.querySelector('.refresh-chart').addEventListener('click', () => loadInitialChunk(chartState, true));
+        chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+            positionChunkLoaders(chartState);
+            handleVisibleRange(chartState, range);
+        });
+
+        chartGrid.appendChild(panel);
+        charts.set(chartState.id, chartState);
+        updatePanelHeader(chartState);
+        loadInitialChunk(chartState);
+        return chartState;
+    }
+
+    function updatePanelHeader(state) {
+        state.panel.querySelector('.chart-symbol').textContent = state.symbol;
+        state.panel.querySelector('.chart-meta').textContent = `${state.bar} candles · ${state.chunkPeriod || requestPeriodForState(state)} chunks · initial ${state.targetPeriod}`;
+        if (!state.candles.length) {
+            state.panel.querySelector('.chart-range').textContent = 'No loaded bars yet';
+        }
+        updateRequestDebug(state);
+    }
+
+    function updateRequestDebug(state, text = '') {
+        const requestEl = state.panel.querySelector('.chart-request');
+        const fallback = state.lastRequestUrl ? `${state.lastLoadReason}: ${state.lastRequestUrl}` : `${state.symbol} · ${state.bar} · chunk ${state.chunkPeriod}`;
+        requestEl.textContent = text || fallback;
+        requestEl.title = requestEl.textContent;
+    }
+
+    function updateCachePill(state, cache) {
+        const pill = state.panel.querySelector('.cache-pill');
+        const hit = Boolean(cache && cache.hit);
+        pill.classList.toggle('hit', hit);
+        pill.classList.toggle('miss', !hit);
+        pill.textContent = hit ? 'Cache hit' : 'IBKR fetch';
+        if (cache && cache.cachedAtIso) {
+            pill.title = `Cached at ${cache.cachedAtIso}`;
+        } else {
+            pill.title = '';
+        }
+    }
+
+    function setPanelMessage(state, message, isError = false, showOverlay = false) {
+        state.panel.classList.toggle('initial-loading', Boolean(message) && !isError && showOverlay);
+        state.panel.classList.toggle('error', Boolean(message) && isError);
+        state.panel.querySelector('.chart-message').textContent = message || '';
+    }
+
+    function describeRange(state) {
+        if (!state.candles.length) return '';
+        const first = new Date(state.candles[0].time * 1000).toLocaleString();
+        const last = new Date(state.candles[state.candles.length - 1].time * 1000).toLocaleString();
+        return `${state.candles.length} bars · ${first} → ${last}`;
+    }
+
+    function describeRequest(state, force, reason) {
+        const source = /^\d+$/.test(state.symbol) ? `conid ${state.symbol}` : state.symbol;
+        const mode = force ? 'force refresh' : reason;
+        return `${mode}: ${source} · ${state.bar} candles · ${state.chunkPeriod} chunk`;
+    }
+
+    function addChunkLoader(state, id, label, targetTime = null) {
+        const loaders = state.panel.querySelector('.chunk-loaders');
+        const loader = document.createElement('div');
+        loader.className = 'chunk-loader';
+        loader.textContent = label;
+        loader.title = label;
+        loaders.appendChild(loader);
+        state.loadingChunks.set(id, { element: loader, targetTime });
+        positionChunkLoaders(state);
+    }
+
+    function removeChunkLoader(state, id) {
+        const loader = state.loadingChunks.get(id);
+        if (!loader) return;
+        loader.element.remove();
+        state.loadingChunks.delete(id);
+        positionChunkLoaders(state);
+    }
+
+    function positionChunkLoaders(state) {
+        const chartArea = state.panel.querySelector('.chart-area');
+        const width = chartArea.clientWidth || 0;
+        let stackedIndex = 0;
+        for (const loader of state.loadingChunks.values()) {
+            let x = 12;
+            if (loader.targetTime !== null && state.chart.timeScale().timeToCoordinate) {
+                const coordinate = state.chart.timeScale().timeToCoordinate(loader.targetTime);
+                if (Number.isFinite(coordinate)) {
+                    x = Math.max(12, Math.min(width - 120, coordinate));
+                }
+            }
+            loader.element.style.left = `${x}px`;
+            loader.element.style.top = `${12 + stackedIndex * 30}px`;
+            stackedIndex++;
+        }
+    }
+
+    function mergeCandles(existingCandles, incomingCandles) {
+        const byTime = new Map();
+        for (const candle of existingCandles) byTime.set(candle.time, candle);
+        for (const candle of incomingCandles) byTime.set(candle.time, candle);
+        return Array.from(byTime.values()).sort((a, b) => a.time - b.time);
+    }
+
+    async function loadChunk(state, options = {}) {
+        const force = Boolean(options.force);
+        const reason = options.reason || 'load';
+        const mode = options.mode || 'replace';
+        const startTime = options.startTime || null;
+        const chunkId = options.chunkId || `${reason}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        const targetTime = options.targetTime || null;
+
+        if (mode === 'replace' && state.isInitialLoading) {
+            updateRequestDebug(state, `Ignored ${reason}: initial load already in progress`);
+            return;
+        }
+        if (mode === 'replace') state.isInitialLoading = true;
+        state.lastLoadReason = force ? 'force refresh' : reason;
+        state.lastRequestUrl = buildMarketDataUrl(state, { force, startTime });
+        const loadingText = describeRequest(state, force, reason);
+        setPanelMessage(state, loadingText, false, mode === 'replace' && !state.candles.length);
+        if (mode !== 'replace') {
+            addChunkLoader(state, chunkId, loadingText, targetTime);
+        }
+        updateRequestDebug(state, `Requesting ${state.lastRequestUrl}`);
+        setStatus(loadingText);
+        updatePanelHeader(state);
+
+        try {
+            const startedAt = performance.now();
+            const response = await fetch(state.lastRequestUrl);
+            const data = await response.json();
+            const elapsedMs = Math.round(performance.now() - startedAt);
+            if (!response.ok) {
+                throw new Error(data.error || `Market data failed: ${response.status}`);
+            }
+
+            const candles = validCandles(data.bars || []);
+            if (!candles.length) {
+                throw new Error('No candles returned for this request.');
+            }
+
+            state.candles = mode === 'prepend' ? mergeCandles(state.candles, candles) : candles;
+            if (state.candles.length) {
+                state.oldestRequestedTime = state.candles[0].time;
+            }
+            state.series.setData(state.candles);
+            if (mode === 'replace') {
+                state.chart.timeScale().fitContent();
+            }
+            state.panel.querySelector('.chart-range').textContent = describeRange(state);
+            updateCachePill(state, data.cache);
+            setPanelMessage(state, '');
+            updateRequestDebug(state, `${state.lastLoadReason}: ${state.lastRequestUrl} · ${elapsedMs}ms · ${candles.length} bars · ${data.cache?.hit ? 'cache hit' : 'IBKR fetch'}`);
+            setStatus(`${state.symbol} ${state.bar} ${state.chunkPeriod} chunk loaded in ${elapsedMs}ms (${data.cache?.hit ? 'cache' : 'IBKR'})`);
+        } catch (error) {
+            console.error(error);
+            setPanelMessage(state, error.message, true);
+            updateRequestDebug(state, `Failed ${state.lastLoadReason}: ${state.lastRequestUrl}`);
+            setStatus(error.message, true);
+        } finally {
+            if (mode === 'replace') state.isInitialLoading = false;
+            removeChunkLoader(state, chunkId);
+        }
+    }
+
+    function loadInitialChunk(state, force = false) {
+        state.chunkPeriod = requestPeriodForState(state);
+        state.candles = [];
+        state.oldestRequestedTime = null;
+        state.requestedOlderEnds.clear();
+        for (const id of Array.from(state.loadingChunks.keys())) {
+            removeChunkLoader(state, id);
+        }
+        updatePanelHeader(state);
+        return loadChunk(state, { force, reason: force ? 'force refresh' : 'initial chunk', mode: 'replace' });
+    }
+
+    function loadOlderChunk(state) {
+        if (!state.candles.length || state.isInitialLoading || state.loadingChunks.size >= 3) return;
+        const earliest = state.oldestRequestedTime || state.candles[0].time;
+        const endBeforeEarliest = earliest - barSeconds(state.bar);
+        if (state.requestedOlderEnds.has(endBeforeEarliest)) return;
+        state.requestedOlderEnds.add(endBeforeEarliest);
+        state.oldestRequestedTime = endBeforeEarliest;
+        const startTime = formatIbkrStartTime(endBeforeEarliest);
+        const chunkId = `older-${endBeforeEarliest}`;
+        updateRequestDebug(state, `Loading older ${state.chunkPeriod} chunk ending before ${startTime}`);
+        setStatus(`Loading older ${state.symbol} ${state.bar} bars…`);
+        return loadChunk(state, { reason: 'older chunk', mode: 'prepend', startTime, chunkId, targetTime: endBeforeEarliest });
+    }
+
+    function handleVisibleRange(state, range) {
+        if (!range || state.isInitialLoading || state.candles.length < 40) return;
+        if (range.from > 25) return;
+
+        if (state.pendingOlderLoad !== null) return;
+
+        state.pendingOlderLoad = window.setTimeout(() => {
+            state.pendingOlderLoad = null;
+            if (state.isInitialLoading) return;
+            loadOlderChunk(state);
+        }, 450);
+    }
+
+    function addChartFromControls() {
+        const symbol = normalizeSymbol(symbolInput.value);
+        if (!symbol) {
+            setStatus('Enter a symbol or numeric conid.', true);
+            symbolInput.focus();
+            return;
+        }
+
+        createPanel({
+            symbol,
+            bar: barSelect.value,
+            period: rangeSelect.value,
+            secType: 'STK',
+            exchange: 'SMART',
+            outsideRth: false
+        });
+    }
+
+    function removeChart(id) {
+        const state = charts.get(id);
+        if (!state) return;
+        state.chart.remove();
+        state.panel.remove();
+        charts.delete(id);
+        setStatus(charts.size ? 'Chart closed' : 'Ready');
+    }
+
+    addChartButton.addEventListener('click', addChartFromControls);
+    gridRowsInput.addEventListener('change', applyGridDimensions);
+    gridColsInput.addEventListener('change', applyGridDimensions);
+    gridRowsInput.addEventListener('input', applyGridDimensions);
+    gridColsInput.addEventListener('input', applyGridDimensions);
+    symbolInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') addChartFromControls();
+    });
+
+    gridRowsInput.value = localStorage.getItem('ibkrChartGridRows') || '1';
+    gridColsInput.value = localStorage.getItem('ibkrChartGridCols') || '1';
+    applyGridDimensions();
+
+    if (!window.LightweightCharts) {
+        setStatus('Chart library failed to load.', true);
+    } else {
+        addChartFromControls();
+    }
+</script>
+</body>
+</html>

@@ -28,6 +28,23 @@ header('Content-Type: text/html; charset=utf-8');
             font-size: 0.75rem;
             color: #666;
         }
+        .top-nav {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .top-nav a {
+            color: #0288d1;
+            text-decoration: none;
+            border: 1px solid #b3e5fc;
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 0.78rem;
+            font-weight: 600;
+        }
+        .top-nav a:hover {
+            background-color: #e1f5fe;
+        }
         .status-dot {
             width: 8px;
             height: 8px;
@@ -387,9 +404,12 @@ header('Content-Type: text/html; charset=utf-8');
 <div class="container">
     <div class="header-top">
         <h1>My Positions</h1>
-        <div class="auth-status">
-            <div id="auth-dot" class="status-dot"></div>
-            <span id="auth-text">Checking session...</span>
+        <div class="top-nav">
+            <a href="charts.php">Charts</a>
+            <div class="auth-status">
+                <div id="auth-dot" class="status-dot"></div>
+                <span id="auth-text">Checking session...</span>
+            </div>
         </div>
     </div>
 
