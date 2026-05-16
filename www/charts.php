@@ -659,7 +659,8 @@ header('Content-Type: text/html; charset=utf-8');
             open: Number(bar.open ?? bar.o),
             high: Number(bar.high ?? bar.h),
             low: Number(bar.low ?? bar.l),
-            close: Number(bar.close ?? bar.c)
+            close: Number(bar.close ?? bar.c),
+            volume: bar.volume ?? bar.v ?? null
         };
     }
 
@@ -671,6 +672,26 @@ header('Content-Type: text/html; charset=utf-8');
                 Number.isFinite(bar.high) &&
                 Number.isFinite(bar.low) &&
                 Number.isFinite(bar.close));
+    }
+
+    function candleSeriesData(candles) {
+        return candles.map((bar) => ({
+            time: bar.time,
+            open: bar.open,
+            high: bar.high,
+            low: bar.low,
+            close: bar.close
+        }));
+    }
+
+    function volumeSeriesData(candles) {
+        return candles
+            .map((bar) => ({
+                time: bar.time,
+                value: Number(bar.volume),
+                color: bar.close >= bar.open ? 'rgba(35, 176, 117, 0.45)' : 'rgba(238, 83, 80, 0.45)'
+            }))
+            .filter((bar) => Number.isFinite(bar.value) && bar.value >= 0);
     }
 
     function sanitizeTimeRange(range) {
@@ -789,7 +810,7 @@ header('Content-Type: text/html; charset=utf-8');
             rightPriceScale: {
                 borderColor: '#34424a',
                 autoScale: true,
-                scaleMargins: { top: 0.12, bottom: 0.12 }
+                scaleMargins: { top: 0.08, bottom: 0.26 }
             },
             timeScale: {
                 borderColor: '#34424a',
@@ -826,6 +847,16 @@ header('Content-Type: text/html; charset=utf-8');
             wickUpColor: upColor,
             wickDownColor: downColor
         });
+        const volumeSeries = chart.addHistogramSeries({
+            priceFormat: { type: 'volume' },
+            priceScaleId: 'volume',
+            lastValueVisible: false,
+            priceLineVisible: false
+        });
+        chart.priceScale('volume').applyOptions({
+            scaleMargins: { top: 0.78, bottom: 0 },
+            borderVisible: false
+        });
 
         const chartState = {
             ...state,
@@ -833,6 +864,7 @@ header('Content-Type: text/html; charset=utf-8');
             panel,
             chart,
             series,
+            volumeSeries,
             candles: [],
             isInitialLoading: false,
             loadingChunks: new Map(),
@@ -1020,7 +1052,8 @@ header('Content-Type: text/html; charset=utf-8');
             if (state.candles.length) {
                 state.oldestRequestedTime = state.candles[0].time;
             }
-            state.series.setData(state.candles);
+            state.series.setData(candleSeriesData(state.candles));
+            state.volumeSeries.setData(volumeSeriesData(state.candles));
             if (mode === 'replace') {
                 if (!restoreSavedTimeRange(state)) {
                     state.chart.timeScale().fitContent();
