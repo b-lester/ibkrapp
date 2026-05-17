@@ -193,8 +193,19 @@ if (file_exists($localConfigPath)) {
             color: #ff9aa2;
         }
 
-        .charts-grid {
+        .workspace {
             flex: 1;
+            min-height: 0;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) 280px;
+            overflow: hidden;
+        }
+
+        .workspace.watchlist-hidden {
+            grid-template-columns: minmax(0, 1fr);
+        }
+
+        .charts-grid {
             min-height: 0;
             display: grid;
             grid-template-columns: repeat(var(--grid-cols, 1), minmax(0, 1fr));
@@ -204,6 +215,138 @@ if (file_exists($localConfigPath)) {
             padding: 10px;
             align-content: stretch;
             overflow: auto;
+        }
+
+        .watchlist-pane {
+            min-height: 0;
+            border-left: 1px solid var(--panel-border);
+            background: #12181c;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .workspace.watchlist-hidden .watchlist-pane {
+            display: none;
+        }
+
+        .watchlist-header {
+            min-height: 42px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 8px;
+            padding: 8px 10px;
+            border-bottom: 1px solid var(--panel-border);
+            background: #141b1f;
+        }
+
+        .watchlist-title {
+            font-weight: 800;
+            font-size: 13px;
+        }
+
+        .watchlist-count {
+            color: var(--muted);
+            font-size: 12px;
+            white-space: nowrap;
+        }
+
+        .watchlist-add {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto;
+            gap: 6px;
+            padding: 8px 10px;
+            border-bottom: 1px solid var(--panel-border);
+        }
+
+        #watchlist-symbol-input {
+            width: 100%;
+            min-height: 32px;
+            text-transform: uppercase;
+        }
+
+        .watchlist-add .icon-button {
+            width: 32px;
+            height: 32px;
+        }
+
+        .watchlist-message {
+            min-height: 20px;
+            padding: 0 10px 7px;
+            color: #ffb4ba;
+            font-size: 12px;
+        }
+
+        .watchlist-items {
+            flex: 1;
+            min-height: 0;
+            overflow: auto;
+        }
+
+        .watchlist-row {
+            width: 100%;
+            min-height: 38px;
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto auto;
+            align-items: center;
+            gap: 8px;
+            padding: 7px 8px 7px 10px;
+            border-bottom: 1px solid rgba(44, 54, 61, 0.72);
+        }
+
+        .watchlist-symbol {
+            font-weight: 800;
+            font-size: 13px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .watchlist-quote {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 1px;
+            min-width: 86px;
+            font-size: 12px;
+        }
+
+        .watchlist-price {
+            color: var(--text);
+            font-variant-numeric: tabular-nums;
+        }
+
+        .watchlist-change {
+            color: var(--muted);
+            font-variant-numeric: tabular-nums;
+        }
+
+        .watchlist-row.up .watchlist-change {
+            color: #7bd9a8;
+        }
+
+        .watchlist-row.down .watchlist-change {
+            color: #ff929a;
+        }
+
+        .watchlist-row.error .watchlist-change {
+            color: #ffb4ba;
+        }
+
+        .watchlist-remove {
+            width: 24px;
+            height: 24px;
+            border: none;
+            border-radius: 4px;
+            color: var(--muted);
+            background: transparent;
+            cursor: pointer;
+        }
+
+        .watchlist-remove:hover {
+            color: var(--text);
+            background: #1d262b;
         }
 
         .chart-panel {
@@ -417,6 +560,16 @@ if (file_exists($localConfigPath)) {
                 flex: 1 1 100%;
             }
 
+            .workspace {
+                grid-template-columns: minmax(0, 1fr);
+            }
+
+            .watchlist-pane {
+                min-height: 260px;
+                border-left: none;
+                border-top: 1px solid var(--panel-border);
+            }
+
             .chart-panel {
                 min-height: 320px;
             }
@@ -470,27 +623,50 @@ if (file_exists($localConfigPath)) {
             <input id="grid-cols-input" class="layout-number" type="number" min="1" max="12" step="1" value="1">
         </div>
         <button id="add-chart-button" class="button primary" type="button">Add Chart</button>
+        <button id="toggle-watchlist-button" class="button" type="button">Watchlist</button>
         <div class="auth-status">
             <div id="auth-dot" class="status-dot"></div>
             <span id="auth-text">Checking session...</span>
         </div>
     </div>
     <div id="status-bar" class="status-bar">Ready</div>
-    <div id="charts-grid" class="charts-grid"></div>
+    <div id="workspace" class="workspace">
+        <div id="charts-grid" class="charts-grid"></div>
+        <aside id="watchlist-pane" class="watchlist-pane">
+            <div class="watchlist-header">
+                <div class="watchlist-title">Watchlist</div>
+                <div id="watchlist-count" class="watchlist-count">0 / 100</div>
+            </div>
+            <div class="watchlist-add">
+                <input id="watchlist-symbol-input" autocomplete="off" spellcheck="false" placeholder="Symbol">
+                <button id="add-watchlist-button" class="icon-button" type="button" title="Add ticker">+</button>
+            </div>
+            <div id="watchlist-message" class="watchlist-message"></div>
+            <div id="watchlist-items" class="watchlist-items"></div>
+        </aside>
+    </div>
 </div>
 
 <script>
+    const workspaceEl = document.getElementById('workspace');
     const chartGrid = document.getElementById('charts-grid');
     const statusBar = document.getElementById('status-bar');
     const addChartButton = document.getElementById('add-chart-button');
+    const toggleWatchlistButton = document.getElementById('toggle-watchlist-button');
     const symbolInput = document.getElementById('symbol-input');
     const barSelect = document.getElementById('bar-select');
     const rangeSelect = document.getElementById('range-select');
     const gridRowsInput = document.getElementById('grid-rows-input');
     const gridColsInput = document.getElementById('grid-cols-input');
+    const watchlistSymbolInput = document.getElementById('watchlist-symbol-input');
+    const addWatchlistButton = document.getElementById('add-watchlist-button');
+    const watchlistItemsEl = document.getElementById('watchlist-items');
+    const watchlistCountEl = document.getElementById('watchlist-count');
+    const watchlistMessageEl = document.getElementById('watchlist-message');
 
     const upColor = '#1fa774';
     const downColor = '#dc4c5a';
+    const watchlistLimit = 100;
     const chunkPeriodByBar = {
         '1min': '1d',
         '2min': '2d',
@@ -514,6 +690,10 @@ if (file_exists($localConfigPath)) {
     const workspaceStorageKey = 'ibkrChartWorkspace';
     let isRestoringWorkspace = false;
     let saveWorkspaceTimer = null;
+    let watchlistVisible = true;
+    let watchlistSymbols = [];
+    const watchlistQuotes = new Map();
+    let watchlistRefreshToken = 0;
     const barOptions = [
         ['1min', '1m'],
         ['2min', '2m'],
@@ -550,6 +730,17 @@ if (file_exists($localConfigPath)) {
         saveWorkspace();
     }
 
+    function setWatchlistVisible(isVisible, shouldSave = true) {
+        watchlistVisible = Boolean(isVisible);
+        workspaceEl.classList.toggle('watchlist-hidden', !watchlistVisible);
+        toggleWatchlistButton.textContent = watchlistVisible ? 'Hide Watchlist' : 'Show Watchlist';
+        for (const state of charts.values()) {
+            state.chart.applyOptions({ autoSize: true });
+            positionChunkLoaders(state);
+        }
+        if (shouldSave) saveWorkspace();
+    }
+
     function serializeChartState(state) {
         return {
             symbol: state.symbol,
@@ -570,7 +761,11 @@ if (file_exists($localConfigPath)) {
         const workspace = {
             rows: clampGridNumber(gridRowsInput.value, 1),
             cols: clampGridNumber(gridColsInput.value, 1),
-            charts: Array.from(charts.values()).map(serializeChartState)
+            charts: Array.from(charts.values()).map(serializeChartState),
+            watchlist: {
+                visible: watchlistVisible,
+                symbols: watchlistSymbols
+            }
         };
         if (saveWorkspaceTimer !== null) {
             window.clearTimeout(saveWorkspaceTimer);
@@ -610,6 +805,178 @@ if (file_exists($localConfigPath)) {
         }
 
         return null;
+    }
+
+    function formatPrice(value) {
+        if (!Number.isFinite(value)) return '—';
+        if (Math.abs(value) >= 1000) return value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        if (Math.abs(value) >= 10) return value.toFixed(2);
+        return value.toFixed(4);
+    }
+
+    function formatPercent(value) {
+        if (!Number.isFinite(value)) return '—';
+        const sign = value > 0 ? '+' : '';
+        return `${sign}${value.toFixed(2)}%`;
+    }
+
+    function escapeHtml(value) {
+        return String(value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+    }
+
+    function setWatchlistMessage(message = '') {
+        watchlistMessageEl.textContent = message;
+    }
+
+    function normalizeWatchlistSymbols(symbols) {
+        if (!Array.isArray(symbols)) return [];
+        const seen = new Set();
+        const normalized = [];
+        for (const symbol of symbols) {
+            const value = normalizeSymbol(String(symbol || ''));
+            if (!value || seen.has(value)) continue;
+            seen.add(value);
+            normalized.push(value);
+            if (normalized.length >= watchlistLimit) break;
+        }
+        return normalized;
+    }
+
+    function renderWatchlist() {
+        watchlistCountEl.textContent = `${watchlistSymbols.length} / ${watchlistLimit}`;
+        watchlistItemsEl.innerHTML = watchlistSymbols.map((symbol) => {
+            const quote = watchlistQuotes.get(symbol) || { status: 'loading' };
+            const price = quote.status === 'loading' ? 'Loading' : formatPrice(quote.price);
+            const change = quote.status === 'error' ? 'Unavailable' : formatPercent(quote.percentChange);
+            const direction = Number(quote.percentChange) > 0 ? 'up' : Number(quote.percentChange) < 0 ? 'down' : '';
+            const rowClass = ['watchlist-row', direction, quote.status === 'error' ? 'error' : ''].filter(Boolean).join(' ');
+            const title = quote.error ? ` title="${escapeHtml(quote.error)}"` : '';
+            return `
+                <div class="${rowClass}" data-symbol="${symbol}"${title}>
+                    <div class="watchlist-symbol">${escapeHtml(symbol)}</div>
+                    <div class="watchlist-quote">
+                        <div class="watchlist-price">${price}</div>
+                        <div class="watchlist-change">${change}</div>
+                    </div>
+                    <button class="watchlist-remove" type="button" data-remove-symbol="${escapeHtml(symbol)}" title="Remove ${escapeHtml(symbol)}">×</button>
+                </div>
+            `;
+        }).join('');
+    }
+
+    function buildWatchlistQuoteUrl(symbol) {
+        const params = new URLSearchParams({
+            symbol,
+            secType: 'STK',
+            bar: '1d',
+            period: '1m',
+            exchange: 'SMART',
+            outsideRth: 'false'
+        });
+        return `marketdata.php?${params.toString()}`;
+    }
+
+    async function fetchWatchlistQuote(symbol) {
+        const response = await fetch(buildWatchlistQuoteUrl(symbol));
+        const data = await response.json();
+        if (!response.ok) {
+            if (response.status === 401 && window.showSessionExpired) {
+                window.showSessionExpired();
+            }
+            throw new Error(data.error || `Quote failed: ${response.status}`);
+        }
+
+        const candles = validCandles(data.bars || []);
+        if (candles.length < 2) {
+            throw new Error('Not enough daily bars returned.');
+        }
+
+        const last = candles[candles.length - 1];
+        const previous = candles[candles.length - 2];
+        const percentChange = previous.close !== 0 ? ((last.close - previous.close) / previous.close) * 100 : 0;
+        return {
+            status: 'ready',
+            price: last.close,
+            percentChange,
+            source: data.cache?.hit ? 'cache' : 'historical',
+            updatedAt: Date.now()
+        };
+    }
+
+    async function refreshWatchlistQuotes(symbols = watchlistSymbols) {
+        const token = ++watchlistRefreshToken;
+        const queue = normalizeWatchlistSymbols(symbols);
+        for (const symbol of queue) {
+            if (!watchlistQuotes.has(symbol)) {
+                watchlistQuotes.set(symbol, { status: 'loading' });
+            }
+        }
+        renderWatchlist();
+
+        let index = 0;
+        const worker = async () => {
+            while (index < queue.length && token === watchlistRefreshToken) {
+                const symbol = queue[index++];
+                try {
+                    watchlistQuotes.set(symbol, await fetchWatchlistQuote(symbol));
+                } catch (error) {
+                    console.warn(`Watchlist quote failed for ${symbol}`, error);
+                    watchlistQuotes.set(symbol, {
+                        status: 'error',
+                        error: error.message,
+                        price: null,
+                        percentChange: null
+                    });
+                }
+                if (token === watchlistRefreshToken) {
+                    renderWatchlist();
+                }
+            }
+        };
+
+        await Promise.all(Array.from({ length: Math.min(4, queue.length) }, worker));
+    }
+
+    function addWatchlistSymbol() {
+        const symbol = normalizeSymbol(watchlistSymbolInput.value);
+        setWatchlistMessage('');
+        if (!symbol) {
+            watchlistSymbolInput.focus();
+            return;
+        }
+        if (!/^[A-Z0-9._-]+$/.test(symbol)) {
+            setWatchlistMessage('Use ticker symbols with letters, numbers, dots, underscores, or dashes.');
+            return;
+        }
+        if (watchlistSymbols.includes(symbol)) {
+            setWatchlistMessage(`${symbol} is already in the watchlist.`);
+            watchlistSymbolInput.value = '';
+            return;
+        }
+        if (watchlistSymbols.length >= watchlistLimit) {
+            setWatchlistMessage(`Watchlist limit is ${watchlistLimit} tickers.`);
+            return;
+        }
+
+        watchlistSymbols = [...watchlistSymbols, symbol];
+        watchlistQuotes.set(symbol, { status: 'loading' });
+        watchlistSymbolInput.value = '';
+        renderWatchlist();
+        saveWorkspace();
+        refreshWatchlistQuotes([symbol]);
+    }
+
+    function removeWatchlistSymbol(symbol) {
+        watchlistSymbols = watchlistSymbols.filter((item) => item !== symbol);
+        watchlistQuotes.delete(symbol);
+        setWatchlistMessage('');
+        renderWatchlist();
+        saveWorkspace();
     }
 
     function setStatus(message, isError = false) {
@@ -1264,6 +1631,16 @@ if (file_exists($localConfigPath)) {
     }
 
     addChartButton.addEventListener('click', addChartFromControls);
+    toggleWatchlistButton.addEventListener('click', () => setWatchlistVisible(!watchlistVisible));
+    addWatchlistButton.addEventListener('click', addWatchlistSymbol);
+    watchlistSymbolInput.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') addWatchlistSymbol();
+    });
+    watchlistItemsEl.addEventListener('click', (event) => {
+        const removeButton = event.target.closest('[data-remove-symbol]');
+        if (!removeButton) return;
+        removeWatchlistSymbol(removeButton.getAttribute('data-remove-symbol'));
+    });
     gridRowsInput.addEventListener('change', applyGridDimensions);
     gridColsInput.addEventListener('change', applyGridDimensions);
     gridRowsInput.addEventListener('input', applyGridDimensions);
@@ -1274,14 +1651,21 @@ if (file_exists($localConfigPath)) {
 
     async function initializeCharts() {
         const savedWorkspace = await loadWorkspace();
+        const shouldRestoreWorkspace = Boolean(savedWorkspace);
+        if (shouldRestoreWorkspace) {
+            isRestoringWorkspace = true;
+        }
+
         gridRowsInput.value = savedWorkspace?.rows || '1';
         gridColsInput.value = savedWorkspace?.cols || '1';
+        watchlistSymbols = normalizeWatchlistSymbols(savedWorkspace?.watchlist?.symbols || []);
+        setWatchlistVisible(savedWorkspace?.watchlist?.visible !== false, false);
+        renderWatchlist();
         applyGridDimensions();
 
         if (!window.LightweightCharts) {
             setStatus('Chart library failed to load.', true);
         } else if (savedWorkspace && savedWorkspace.charts.length > 0) {
-            isRestoringWorkspace = true;
             savedWorkspace.charts.forEach((savedChart) => createPanel({
                 symbol: normalizeSymbol(savedChart.symbol || 'NOW'),
                 conid: savedChart.conid || null,
@@ -1292,10 +1676,17 @@ if (file_exists($localConfigPath)) {
                 outsideRth: Boolean(savedChart.outsideRth),
                 savedTimeRange: timeRangeFromSavedChart(savedChart)
             }));
-            isRestoringWorkspace = false;
-            saveWorkspace();
         } else {
             addChartFromControls();
+        }
+
+        if (shouldRestoreWorkspace) {
+            isRestoringWorkspace = false;
+            saveWorkspace();
+        }
+
+        if (watchlistSymbols.length > 0) {
+            refreshWatchlistQuotes();
         }
     }
 
