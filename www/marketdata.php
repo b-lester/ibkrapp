@@ -281,12 +281,59 @@ function minimum_cache_bars_for_request(string $period, string $bar): int {
     $barSeconds = duration_seconds($bar);
     if ($periodSeconds <= 0 || $barSeconds <= 0) return 1;
 
-    $calendarBars = (int)floor($periodSeconds / $barSeconds);
-    if ($calendarBars <= 10) return 1;
+    $periodDays = max(1, (int)ceil($periodSeconds / 86400));
+    $weekdayDays = max(1, (int)floor($periodDays * 5 / 7));
 
-    // RTH data has large calendar gaps. Requiring 20% avoids partial-window hits
-    // while still allowing historical chunks to be reused across adjacent days.
-    return max(5, (int)floor($calendarBars * 0.2));
+    if ($barSeconds < 86400) {
+        $barsPerTradingDay = max(1, (int)floor((6.5 * 60 * 60) / $barSeconds));
+        return max(5, (int)floor($weekdayDays * $barsPerTradingDay * 0.65));
+    }
+
+    if ($barSeconds < 604800) {
+        return max(5, (int)floor($weekdayDays * 0.65));
+    }
+
+    $calendarBars = max(1, (int)floor($periodSeconds / $barSeconds));
+    return max(1, (int)floor($calendarBars * 0.65));
+}
+
+function cache_window_for_request(string $period, ?string $startTime): ?array {
+    $periodSeconds = duration_seconds($period);
+    if ($periodSeconds <= 0) return null;
+
+    $endMs = ibkr_start_time_to_ms($startTime);
+    if ($endMs === null) {
+        $endMs = time() * 1000;
+    }
+
+    return [
+        'start_ms' => $endMs - ($periodSeconds * 1000),
+        'end_ms' => $endMs,
+    ];
+}
+
+function cached_bars_cover_request(array $bars, string $period, string $bar, ?string $startTime): bool {
+    if (empty($bars)) return false;
+
+    $window = cache_window_for_request($period, $startTime);
+    if ($window === null) return false;
+
+    $barSeconds = max(1, duration_seconds($bar));
+    $periodSeconds = max(1, duration_seconds($period));
+    $times = array_values(array_filter(array_map(static function ($rawBar) {
+        return isset($rawBar['t']) ? (int)$rawBar['t'] : null;
+    }, $bars), static fn ($time) => $time !== null && $time > 0));
+    if (empty($times)) return false;
+
+    sort($times, SORT_NUMERIC);
+    $firstBarTime = $times[0];
+    $lastBarTime = $times[count($times) - 1];
+    $edgeToleranceMs = max($barSeconds * 10, (int)floor($periodSeconds * 0.1)) * 1000;
+
+    if ($firstBarTime > ($window['start_ms'] + $edgeToleranceMs)) return false;
+    if ($lastBarTime < ($window['end_ms'] - $edgeToleranceMs)) return false;
+
+    return count($times) >= minimum_cache_bars_for_request($period, $bar);
 }
 
 function cached_row_to_bar(array $row): array {
@@ -301,7 +348,7 @@ function cached_row_to_bar(array $row): array {
     ];
 }
 
-function load_cached_history(mysqli $db, string $cacheKey, int $maxAgeSeconds): ?array {
+function load_cached_history(mysqli $db, string $cacheKey, int $maxAgeSeconds, string $period, string $bar, ?string $startTime): ?array {
     $stmt = $db->prepare("
         SELECT
             bar_time,
@@ -336,6 +383,10 @@ function load_cached_history(mysqli $db, string $cacheKey, int $maxAgeSeconds): 
         return null;
     }
 
+    if (!cached_bars_cover_request($bars, $period, $bar, $startTime)) {
+        return null;
+    }
+
     return [
         'payload' => [
             'data' => $bars,
@@ -357,14 +408,11 @@ function load_cached_history_by_bars(
     string $source,
     int $maxAgeSeconds
 ): ?array {
-    $periodSeconds = duration_seconds($period);
-    if ($periodSeconds <= 0) return null;
+    $window = cache_window_for_request($period, $startTime);
+    if ($window === null) return null;
 
-    $endMs = ibkr_start_time_to_ms($startTime);
-    if ($endMs === null) {
-        $endMs = time() * 1000;
-    }
-    $startMs = $endMs - ($periodSeconds * 1000);
+    $startMs = $window['start_ms'];
+    $endMs = $window['end_ms'];
     $freshAfter = $maxAgeSeconds > 0 ? time() - $maxAgeSeconds : 0;
     $outsideRthInt = $outsideRth ? 1 : 0;
     $conidInt = (int)$conid;
@@ -422,7 +470,7 @@ function load_cached_history_by_bars(
     }
     $stmt->close();
 
-    if (count($bars) < minimum_cache_bars_for_request($period, $bar) || $fetchedAt === null) {
+    if ($fetchedAt === null || !cached_bars_cover_request($bars, $period, $bar, $startTime)) {
         return null;
     }
 
@@ -661,7 +709,7 @@ try {
             'source' => $source,
         ]);
 
-        $cached = load_cached_history($db, $cacheKey, $cacheTtl);
+        $cached = load_cached_history($db, $cacheKey, $cacheTtl, $period, $bar, $startTime);
         if ($cached !== null) {
             echo json_encode(
                 format_history_response($cached['payload'], [
@@ -753,7 +801,7 @@ try {
     ];
 
     if ($db !== null && !$force) {
-        $cached = load_cached_history($db, $cacheKey, $cacheTtl);
+        $cached = load_cached_history($db, $cacheKey, $cacheTtl, $period, $bar, $startTime);
         if ($cached !== null) {
             echo json_encode(
                 format_history_response($cached['payload'], $requestPayload, true, $cached['fetched_at'], $cacheKey, true),
