@@ -357,6 +357,13 @@ if (file_exists($localConfigPath)) {
             display: flex;
             flex-direction: column;
             overflow: hidden;
+            outline: 2px solid transparent;
+            outline-offset: -2px;
+        }
+
+        .chart-panel.focused {
+            border-color: #4597ff;
+            box-shadow: 0 0 0 1px rgba(69, 151, 255, 0.45);
         }
 
         .charts-grid:has(.chart-panel:only-child) {
@@ -583,36 +590,7 @@ if (file_exists($localConfigPath)) {
         <a class="nav-link" href="index.php">Positions</a>
         <div class="control-group">
             <label for="symbol-input">Symbol</label>
-            <input id="symbol-input" value="NOW" autocomplete="off" spellcheck="false">
-        </div>
-        <div class="control-group">
-            <label for="bar-select">Bar</label>
-            <select id="bar-select">
-                <option value="1min">1m</option>
-                <option value="2min">2m</option>
-                <option value="3min">3m</option>
-                <option value="5min" selected>5m</option>
-                <option value="10min">10m</option>
-                <option value="15min">15m</option>
-                <option value="30min">30m</option>
-                <option value="1h">1h</option>
-                <option value="2h">2h</option>
-                <option value="4h">4h</option>
-                <option value="1d">1D</option>
-                <option value="1w">1W</option>
-                <option value="1m">1M</option>
-            </select>
-        </div>
-        <div class="control-group">
-            <label for="range-select">Initial</label>
-            <select id="range-select">
-                <option value="1d" selected>1D</option>
-                <option value="1w">1W</option>
-                <option value="1m">1M</option>
-                <option value="3m">3M</option>
-                <option value="6m">6M</option>
-                <option value="1y">1Y</option>
-            </select>
+            <input id="symbol-input" autocomplete="off" spellcheck="false">
         </div>
         <div class="control-group">
             <label for="grid-rows-input">Rows</label>
@@ -654,8 +632,6 @@ if (file_exists($localConfigPath)) {
     const addChartButton = document.getElementById('add-chart-button');
     const toggleWatchlistButton = document.getElementById('toggle-watchlist-button');
     const symbolInput = document.getElementById('symbol-input');
-    const barSelect = document.getElementById('bar-select');
-    const rangeSelect = document.getElementById('range-select');
     const gridRowsInput = document.getElementById('grid-rows-input');
     const gridColsInput = document.getElementById('grid-cols-input');
     const watchlistSymbolInput = document.getElementById('watchlist-symbol-input');
@@ -667,6 +643,8 @@ if (file_exists($localConfigPath)) {
     const upColor = '#1fa774';
     const downColor = '#dc4c5a';
     const watchlistLimit = 100;
+    const defaultNewChartBar = '1d';
+    const defaultNewChartPeriod = '1y';
     const chunkPeriodByBar = {
         '1min': '1d',
         '2min': '2d',
@@ -694,6 +672,7 @@ if (file_exists($localConfigPath)) {
     let watchlistSymbols = [];
     const watchlistQuotes = new Map();
     let watchlistRefreshToken = 0;
+    let focusedChartId = null;
     const barOptions = [
         ['1min', '1m'],
         ['2min', '2m'],
@@ -1178,6 +1157,20 @@ if (file_exists($localConfigPath)) {
             .join('');
     }
 
+    function setFocusedChart(id) {
+        if (!charts.has(id)) return;
+        focusedChartId = id;
+        for (const [chartId, chartState] of charts.entries()) {
+            chartState.panel.classList.toggle('focused', chartId === focusedChartId);
+        }
+    }
+
+    function focusSoleChart() {
+        if (charts.size !== 1) return;
+        const onlyChart = charts.values().next().value;
+        if (onlyChart) setFocusedChart(onlyChart.id);
+    }
+
     function createPanel(state) {
         const panel = document.createElement('section');
         panel.className = 'chart-panel initial-loading';
@@ -1301,6 +1294,7 @@ if (file_exists($localConfigPath)) {
 
         panel.querySelector('.close-chart').addEventListener('click', () => removeChart(chartState.id));
         panel.querySelector('.refresh-chart').addEventListener('click', () => loadInitialChunk(chartState, false));
+        panel.addEventListener('pointerdown', () => setFocusedChart(chartState.id));
         panel.querySelector('.chart-bar-select').addEventListener('change', (event) => {
             chartState.bar = event.target.value;
             chartState.savedTimeRange = null;
@@ -1316,6 +1310,9 @@ if (file_exists($localConfigPath)) {
 
         chartGrid.appendChild(panel);
         charts.set(chartState.id, chartState);
+        if (!isRestoringWorkspace || charts.size === 1) {
+            setFocusedChart(chartState.id);
+        }
         updatePanelHeader(chartState);
         saveWorkspace();
         loadInitialChunk(chartState);
@@ -1609,8 +1606,8 @@ if (file_exists($localConfigPath)) {
 
         createPanel({
             symbol,
-            bar: barSelect.value,
-            period: rangeSelect.value,
+            bar: defaultNewChartBar,
+            period: defaultNewChartPeriod,
             secType: 'STK',
             exchange: 'SMART',
             outsideRth: false
@@ -1626,6 +1623,12 @@ if (file_exists($localConfigPath)) {
         state.chart.remove();
         state.panel.remove();
         charts.delete(id);
+        if (focusedChartId === id) {
+            focusedChartId = null;
+            const nextChart = charts.values().next().value;
+            if (nextChart) setFocusedChart(nextChart.id);
+        }
+        focusSoleChart();
         saveWorkspace();
         setStatus(charts.size ? 'Chart closed' : 'Ready');
     }
@@ -1666,22 +1669,27 @@ if (file_exists($localConfigPath)) {
         if (!window.LightweightCharts) {
             setStatus('Chart library failed to load.', true);
         } else if (savedWorkspace && savedWorkspace.charts.length > 0) {
-            savedWorkspace.charts.forEach((savedChart) => createPanel({
-                symbol: normalizeSymbol(savedChart.symbol || 'NOW'),
-                conid: savedChart.conid || null,
-                bar: savedChart.bar || '5min',
-                period: savedChart.period || '1d',
-                secType: savedChart.secType || 'STK',
-                exchange: savedChart.exchange || 'SMART',
-                outsideRth: Boolean(savedChart.outsideRth),
-                savedTimeRange: timeRangeFromSavedChart(savedChart)
-            }));
+            savedWorkspace.charts.forEach((savedChart) => {
+                const savedSymbol = normalizeSymbol(savedChart.symbol || '');
+                if (!savedSymbol) return;
+                createPanel({
+                    symbol: savedSymbol,
+                    conid: savedChart.conid || null,
+                    bar: savedChart.bar || '5min',
+                    period: savedChart.period || '1d',
+                    secType: savedChart.secType || 'STK',
+                    exchange: savedChart.exchange || 'SMART',
+                    outsideRth: Boolean(savedChart.outsideRth),
+                    savedTimeRange: timeRangeFromSavedChart(savedChart)
+                });
+            });
         } else {
-            addChartFromControls();
+            symbolInput.focus();
         }
 
         if (shouldRestoreWorkspace) {
             isRestoringWorkspace = false;
+            focusSoleChart();
             saveWorkspace();
         }
 
