@@ -759,8 +759,7 @@ if (file_exists($localConfigPath)) {
             exchange: state.exchange,
             outsideRth: state.outsideRth,
             viewport: {
-                timeRange: state.savedTimeRange || null,
-                logicalRange: state.savedLogicalRange || null
+                timeRange: state.savedTimeRange || null
             }
         };
     }
@@ -1156,32 +1155,14 @@ if (file_exists($localConfigPath)) {
         return { from, to };
     }
 
-    function sanitizeLogicalRange(range) {
-        if (!range) return null;
-        const from = Number(range.from);
-        const to = Number(range.to);
-        if (!Number.isFinite(from) || !Number.isFinite(to) || from >= to) return null;
-        return { from, to };
-    }
-
     function timeRangeFromSavedChart(savedChart) {
         return sanitizeTimeRange(savedChart?.viewport?.timeRange || savedChart?.timeRange || null);
     }
 
-    function logicalRangeFromSavedChart(savedChart) {
-        return sanitizeLogicalRange(savedChart?.viewport?.logicalRange || savedChart?.logicalRange || null);
-    }
-
-    function captureViewportState(state) {
-        if (!state.candles.length) return;
-        if (state.chart.timeScale().getVisibleRange) {
-            const timeRange = sanitizeTimeRange(state.chart.timeScale().getVisibleRange());
-            if (timeRange) state.savedTimeRange = timeRange;
-        }
-        if (state.chart.timeScale().getVisibleLogicalRange) {
-            const logicalRange = sanitizeLogicalRange(state.chart.timeScale().getVisibleLogicalRange());
-            if (logicalRange) state.savedLogicalRange = logicalRange;
-        }
+    function captureTimeRange(state) {
+        if (!state.candles.length || !state.chart.timeScale().getVisibleRange) return;
+        const timeRange = sanitizeTimeRange(state.chart.timeScale().getVisibleRange());
+        if (timeRange) state.savedTimeRange = timeRange;
     }
 
     function scheduleTimeRangeSave(state) {
@@ -1191,25 +1172,20 @@ if (file_exists($localConfigPath)) {
         }
         state.timeRangeSaveTimer = window.setTimeout(() => {
             state.timeRangeSaveTimer = null;
-            captureViewportState(state);
+            captureTimeRange(state);
             saveWorkspace();
         }, 250);
     }
 
-    function restoreSavedViewport(state) {
+    function restoreSavedTimeRange(state) {
+        if (!state.savedTimeRange) return false;
         try {
-            if (state.savedLogicalRange && state.chart.timeScale().setVisibleLogicalRange) {
-                state.chart.timeScale().setVisibleLogicalRange(state.savedLogicalRange);
-                return true;
-            }
-            if (state.savedTimeRange && state.chart.timeScale().setVisibleRange) {
-                state.chart.timeScale().setVisibleRange(state.savedTimeRange);
-                return true;
-            }
+            state.chart.timeScale().setVisibleRange(state.savedTimeRange);
+            return true;
         } catch (error) {
-            console.warn('Failed to restore chart viewport', error);
+            console.warn('Failed to restore chart time range', error);
+            return false;
         }
-        return false;
     }
 
     function needsSavedTimeRangeBackfill(state) {
@@ -1230,7 +1206,7 @@ if (file_exists($localConfigPath)) {
         if (!state.isRestoringTimeRange) return;
         state.isRestoringTimeRange = false;
         window.setTimeout(() => {
-            captureViewportState(state);
+            captureTimeRange(state);
             saveWorkspace();
         }, 300);
     }
@@ -1372,8 +1348,7 @@ if (file_exists($localConfigPath)) {
             exchange: state.exchange || 'SMART',
             outsideRth: Boolean(state.outsideRth),
             savedTimeRange: sanitizeTimeRange(state.savedTimeRange),
-            savedLogicalRange: sanitizeLogicalRange(state.savedLogicalRange),
-            isRestoringTimeRange: Boolean(sanitizeLogicalRange(state.savedLogicalRange) || sanitizeTimeRange(state.savedTimeRange))
+            isRestoringTimeRange: Boolean(sanitizeTimeRange(state.savedTimeRange))
         };
 
         panel.querySelector('.close-chart').addEventListener('click', () => removeChart(chartState.id));
@@ -1397,7 +1372,6 @@ if (file_exists($localConfigPath)) {
         panel.querySelector('.chart-bar-select').addEventListener('change', (event) => {
             chartState.bar = event.target.value;
             chartState.savedTimeRange = null;
-            chartState.savedLogicalRange = null;
             chartState.isRestoringTimeRange = false;
             saveWorkspace();
             loadInitialChunk(chartState, false);
@@ -1443,10 +1417,10 @@ if (file_exists($localConfigPath)) {
             return false;
         }
 
-        captureViewportState(state);
+        captureTimeRange(state);
         state.symbol = symbol;
         state.conid = null;
-        state.isRestoringTimeRange = Boolean(state.savedLogicalRange || state.savedTimeRange);
+        state.isRestoringTimeRange = Boolean(state.savedTimeRange);
         saveWorkspace();
         updatePanelHeader(state);
         loadInitialChunk(state, false);
@@ -1648,13 +1622,13 @@ if (file_exists($localConfigPath)) {
             state.series.setData(candleSeriesData(state.candles));
             state.volumeSeries.setData(volumeSeriesData(state.candles));
             if (mode === 'replace') {
-                if (!restoreSavedViewport(state)) {
+                if (!restoreSavedTimeRange(state)) {
                     state.chart.timeScale().fitContent();
                 }
             } else {
                 const restoredLogicalRange = restoreLogicalRangeAfterPrepend(state, previousLogicalRange, logicalShift);
                 if (!restoredLogicalRange || state.isRestoringTimeRange) {
-                    restoreSavedViewport(state);
+                    restoreSavedTimeRange(state);
                 }
             }
             shouldBackfillSavedRange = needsSavedTimeRangeBackfill(state);
@@ -1669,7 +1643,7 @@ if (file_exists($localConfigPath)) {
                 updateRequestDebug(state, `${message}: ${state.lastRequestUrl}`);
                 setStatus(`${state.symbol} ${state.bar}: ${message}`);
                 if (state.candles.length) {
-                    restoreSavedViewport(state);
+                    restoreSavedTimeRange(state);
                 }
                 shouldBackfillSavedRange = false;
                 shouldFinishTimeRangeRestore = false;
@@ -1833,8 +1807,7 @@ if (file_exists($localConfigPath)) {
                     secType: savedChart.secType || 'STK',
                     exchange: savedChart.exchange || 'SMART',
                     outsideRth: Boolean(savedChart.outsideRth),
-                    savedTimeRange: timeRangeFromSavedChart(savedChart),
-                    savedLogicalRange: logicalRangeFromSavedChart(savedChart)
+                    savedTimeRange: timeRangeFromSavedChart(savedChart)
                 });
             });
         } else {
