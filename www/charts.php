@@ -574,6 +574,38 @@ if (file_exists($localConfigPath)) {
             background: #1d262b;
         }
 
+        .drag-handle {
+            cursor: grab;
+            color: var(--muted);
+            padding: 2px 5px 2px 2px;
+            font-size: 13px;
+            line-height: 1;
+            user-select: none;
+            flex-shrink: 0;
+            opacity: 0.6;
+        }
+
+        .drag-handle:hover {
+            opacity: 1;
+            color: var(--text);
+        }
+
+        .drag-handle:active {
+            cursor: grabbing;
+        }
+
+        .chart-panel.dragging {
+            opacity: 0.35;
+        }
+
+        .chart-panel.drop-before {
+            box-shadow: -3px 0 0 0 var(--accent), 0 0 0 1px var(--accent);
+        }
+
+        .chart-panel.drop-after {
+            box-shadow: 3px 0 0 0 var(--accent), 0 0 0 1px var(--accent);
+        }
+
         #max-panel-host {
             display: none;
             position: fixed;
@@ -706,6 +738,7 @@ if (file_exists($localConfigPath)) {
 
     const maxPanelHost = document.getElementById('max-panel-host');
     let maximizedChartId = null;
+    let draggingChartId = null;
 
     let nextChartId = 1;
     const charts = new Map();
@@ -1255,6 +1288,7 @@ if (file_exists($localConfigPath)) {
         panel.innerHTML = `
             <div class="chart-header">
                 <div class="chart-title">
+                    <span class="drag-handle" draggable="true" title="Drag to reorder">⠿</span>
                     <input class="chart-symbol-input" autocomplete="off" spellcheck="false" title="Chart symbol">
                     <span class="chart-meta"></span>
                 </div>
@@ -1400,6 +1434,46 @@ if (file_exists($localConfigPath)) {
             positionChunkLoaders(chartState);
             handleVisibleRange(chartState, range);
             scheduleTimeRangeSave(chartState);
+        });
+
+        const handle = panel.querySelector('.drag-handle');
+        handle.addEventListener('dragstart', (e) => {
+            draggingChartId = chartState.id;
+            panel.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', String(chartState.id));
+        });
+        handle.addEventListener('dragend', () => {
+            draggingChartId = null;
+            panel.classList.remove('dragging');
+            for (const s of charts.values()) {
+                s.panel.classList.remove('drop-before', 'drop-after');
+            }
+        });
+        panel.addEventListener('dragover', (e) => {
+            if (draggingChartId === null || draggingChartId === chartState.id) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            const rect = panel.getBoundingClientRect();
+            const isBefore = e.clientX < rect.left + rect.width / 2;
+            panel.classList.toggle('drop-before', isBefore);
+            panel.classList.toggle('drop-after', !isBefore);
+        });
+        panel.addEventListener('dragleave', (e) => {
+            if (!panel.contains(e.relatedTarget)) {
+                panel.classList.remove('drop-before', 'drop-after');
+            }
+        });
+        panel.addEventListener('drop', (e) => {
+            e.preventDefault();
+            panel.classList.remove('drop-before', 'drop-after');
+            if (draggingChartId === null || draggingChartId === chartState.id) return;
+            const draggingState = charts.get(draggingChartId);
+            if (!draggingState || draggingState.panel.parentNode !== chartGrid) return;
+            const rect = panel.getBoundingClientRect();
+            const isBefore = e.clientX < rect.left + rect.width / 2;
+            chartGrid.insertBefore(draggingState.panel, isBefore ? panel : panel.nextSibling);
+            saveWorkspace();
         });
 
         chartGrid.appendChild(panel);
