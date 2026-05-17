@@ -53,6 +53,17 @@ if (file_exists($localConfigPath)) {
         .top-nav a:hover {
             background-color: #e1f5fe;
         }
+        .top-nav .auth-status a {
+            border: none;
+            border-radius: 0;
+            padding: 0;
+            font-size: inherit;
+            font-weight: inherit;
+        }
+        .top-nav .auth-status a:hover {
+            background-color: transparent;
+            text-decoration: underline;
+        }
         .status-dot {
             width: 8px;
             height: 8px;
