@@ -333,7 +333,21 @@ function cached_bars_cover_request(array $bars, string $period, string $bar, ?st
     if ($firstBarTime > ($window['start_ms'] + $edgeToleranceMs)) return false;
     if ($lastBarTime < ($window['end_ms'] - $edgeToleranceMs)) return false;
 
-    return count($times) >= minimum_cache_bars_for_request($period, $bar);
+    if (count($times) < minimum_cache_bars_for_request($period, $bar)) return false;
+
+    // Reject if any two adjacent bars have a gap larger than max(8 calendar days, 3× the bar
+    // duration). This catches missing months/weeks that the edge-time checks cannot see because
+    // they only inspect the first and last bar. load_cached_history_by_bars assembles rows from
+    // multiple fetches filtered by fetched_at freshness; bars whose last fetch is outside the TTL
+    // window get excluded by SQL, which can silently open a hole in the middle of the series.
+    $maxGapMs = max(8 * 86400, 3 * $barSeconds) * 1000;
+    for ($i = 1, $n = count($times); $i < $n; $i++) {
+        if (($times[$i] - $times[$i - 1]) > $maxGapMs) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 function cached_row_to_bar(array $row): array {

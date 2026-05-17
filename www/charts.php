@@ -1082,11 +1082,6 @@ if (file_exists($localConfigPath)) {
         return `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}-${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`;
     }
 
-    function chunkEndForTime(state, unixSeconds) {
-        const chunkSeconds = chunkSecondsForPeriod(state.chunkPeriod || requestPeriodForState(state));
-        return Math.floor(unixSeconds / chunkSeconds) * chunkSeconds;
-    }
-
     function buildMarketDataUrl(state, options = {}) {
         const force = Boolean(options.force);
         const startTime = options.startTime || null;
@@ -1713,7 +1708,11 @@ if (file_exists($localConfigPath)) {
         if (!state.candles.length || state.isInitialLoading || state.loadingChunks.size >= 3) return;
         const earliestLoaded = state.candles[0].time;
         if (state.nextOlderChunkEnd === null) {
-            state.nextOlderChunkEnd = chunkEndForTime(state, earliestLoaded - barSeconds(state.bar));
+            // Anchor the first older chunk to exactly where loaded data starts.
+            // Snapping to an epoch-aligned boundary (the previous approach) left a gap
+            // between the snap point and the initial chunk's first bar, which caused
+            // entire months to never be requested.
+            state.nextOlderChunkEnd = earliestLoaded;
         }
 
         let chunkEnd = state.nextOlderChunkEnd;
