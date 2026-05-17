@@ -293,6 +293,14 @@ if (file_exists($localConfigPath)) {
             gap: 8px;
             padding: 7px 8px 7px 10px;
             border-bottom: 1px solid rgba(44, 54, 61, 0.72);
+            outline: 2px solid transparent;
+            outline-offset: -2px;
+            cursor: pointer;
+        }
+
+        .watchlist-row.focused {
+            border-color: #4597ff;
+            box-shadow: 0 0 0 1px rgba(69, 151, 255, 0.45);
         }
 
         .watchlist-symbol {
@@ -516,10 +524,10 @@ if (file_exists($localConfigPath)) {
         }
 
         .chart-footer {
-            min-height: 48px;
-            display: grid;
-            grid-template-columns: minmax(0, 1fr) auto;
+            min-height: 38px;
+            display: flex;
             align-items: center;
+            justify-content: flex-end;
             gap: 8px;
             padding: 5px 9px;
             border-top: 1px solid var(--panel-border);
@@ -527,22 +535,10 @@ if (file_exists($localConfigPath)) {
             font-size: 12px;
         }
 
-        .chart-debug {
-            min-width: 0;
+        .chart-footer-actions {
             display: flex;
-            flex-direction: column;
-            gap: 2px;
-        }
-
-        .chart-range,
-        .chart-request {
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-        }
-
-        .chart-request {
-            color: #a8b6bd;
+            align-items: center;
+            gap: 8px;
         }
 
         .cache-pill {
@@ -560,6 +556,22 @@ if (file_exists($localConfigPath)) {
         .cache-pill.miss {
             color: #f2c38f;
             border-color: #7f5b2c;
+        }
+
+        .footer-button {
+            min-height: 26px;
+            border: 1px solid var(--panel-border);
+            border-radius: 6px;
+            color: var(--text);
+            background: transparent;
+            padding: 3px 8px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        .footer-button:hover {
+            border-color: #45545e;
+            background: #1d262b;
         }
 
         @media (max-width: 680px) {
@@ -658,6 +670,7 @@ if (file_exists($localConfigPath)) {
     const watchlistLimit = 100;
     const defaultNewChartBar = '1d';
     const defaultNewChartPeriod = '1y';
+    const maxConcurrentMarketDataRequests = 2;
     const chunkPeriodByBar = {
         '1min': '1d',
         '2min': '2d',
@@ -686,6 +699,9 @@ if (file_exists($localConfigPath)) {
     const watchlistQuotes = new Map();
     let watchlistRefreshToken = 0;
     let focusedChartId = null;
+    let focusedWatchlistSymbol = null;
+    let activeMarketDataRequests = 0;
+    const queuedMarketDataRequests = [];
     const barOptions = [
         ['1min', '1m'],
         ['2min', '2m'],
@@ -839,6 +855,28 @@ if (file_exists($localConfigPath)) {
         return normalized;
     }
 
+    function runNextMarketDataRequest() {
+        if (activeMarketDataRequests >= maxConcurrentMarketDataRequests) return;
+        const next = queuedMarketDataRequests.shift();
+        if (!next) return;
+
+        activeMarketDataRequests++;
+        fetch(next.url, next.options)
+            .then(next.resolve)
+            .catch(next.reject)
+            .finally(() => {
+                activeMarketDataRequests--;
+                runNextMarketDataRequest();
+            });
+    }
+
+    function queuedMarketDataFetch(url, options) {
+        return new Promise((resolve, reject) => {
+            queuedMarketDataRequests.push({ url, options, resolve, reject });
+            runNextMarketDataRequest();
+        });
+    }
+
     function renderWatchlist() {
         watchlistCountEl.textContent = `${watchlistSymbols.length} / ${watchlistLimit}`;
         watchlistItemsEl.innerHTML = watchlistSymbols.map((symbol) => {
@@ -846,7 +884,12 @@ if (file_exists($localConfigPath)) {
             const price = quote.status === 'loading' ? 'Loading' : formatPrice(quote.price);
             const change = quote.status === 'error' ? 'Unavailable' : formatPercent(quote.percentChange);
             const direction = Number(quote.percentChange) > 0 ? 'up' : Number(quote.percentChange) < 0 ? 'down' : '';
-            const rowClass = ['watchlist-row', direction, quote.status === 'error' ? 'error' : ''].filter(Boolean).join(' ');
+            const rowClass = [
+                'watchlist-row',
+                direction,
+                quote.status === 'error' ? 'error' : '',
+                symbol === focusedWatchlistSymbol ? 'focused' : ''
+            ].filter(Boolean).join(' ');
             const title = quote.error ? ` title="${escapeHtml(quote.error)}"` : '';
             return `
                 <div class="${rowClass}" data-symbol="${symbol}"${title}>
@@ -859,6 +902,12 @@ if (file_exists($localConfigPath)) {
                 </div>
             `;
         }).join('');
+    }
+
+    function setFocusedWatchlistSymbol(symbol) {
+        const normalizedSymbol = normalizeSymbol(symbol || '');
+        focusedWatchlistSymbol = watchlistSymbols.includes(normalizedSymbol) ? normalizedSymbol : null;
+        renderWatchlist();
     }
 
     function buildWatchlistQuoteUrl(symbol) {
@@ -874,7 +923,7 @@ if (file_exists($localConfigPath)) {
     }
 
     async function fetchWatchlistQuote(symbol) {
-        const response = await fetch(buildWatchlistQuoteUrl(symbol));
+        const response = await queuedMarketDataFetch(buildWatchlistQuoteUrl(symbol));
         const data = await response.json();
         if (!response.ok) {
             if (response.status === 401 && window.showSessionExpired) {
@@ -966,6 +1015,9 @@ if (file_exists($localConfigPath)) {
     function removeWatchlistSymbol(symbol) {
         watchlistSymbols = watchlistSymbols.filter((item) => item !== symbol);
         watchlistQuotes.delete(symbol);
+        if (focusedWatchlistSymbol === symbol) {
+            focusedWatchlistSymbol = null;
+        }
         setWatchlistMessage('');
         renderWatchlist();
         saveWorkspace();
@@ -1207,11 +1259,10 @@ if (file_exists($localConfigPath)) {
                 <div class="chart-message">Loading…</div>
             </div>
             <div class="chart-footer">
-                <div class="chart-debug">
-                    <span class="chart-range"></span>
-                    <span class="chart-request"></span>
+                <div class="chart-footer-actions">
+                    <button class="footer-button auto-fit-chart" type="button" title="Auto-fit price scale">Auto-fit</button>
+                    <span class="cache-pill">Cache</span>
                 </div>
-                <span class="cache-pill">Cache</span>
             </div>
         `;
 
@@ -1307,7 +1358,10 @@ if (file_exists($localConfigPath)) {
 
         panel.querySelector('.close-chart').addEventListener('click', () => removeChart(chartState.id));
         panel.querySelector('.refresh-chart').addEventListener('click', () => loadInitialChunk(chartState, false));
+        panel.querySelector('.auto-fit-chart').addEventListener('click', () => autoFitChart(chartState));
         panel.addEventListener('pointerdown', () => setFocusedChart(chartState.id));
+        panel.querySelector('.chart-symbol-input').addEventListener('focus', (event) => event.target.select());
+        panel.querySelector('.chart-symbol-input').addEventListener('click', (event) => event.target.select());
         panel.querySelector('.chart-symbol-input').addEventListener('blur', () => commitChartSymbolChange(chartState));
         panel.querySelector('.chart-symbol-input').addEventListener('keydown', (event) => {
             if (event.key === 'Enter') {
@@ -1354,39 +1408,54 @@ if (file_exists($localConfigPath)) {
         if (barSelect && barSelect.value !== state.bar) {
             barSelect.value = state.bar;
         }
-        if (!state.candles.length) {
-            state.panel.querySelector('.chart-range').textContent = 'No loaded bars yet';
-        }
         updateRequestDebug(state);
+    }
+
+    function updateChartSymbol(state, symbolValue) {
+        const symbol = normalizeSymbol(symbolValue);
+        if (!symbol) {
+            setStatus('Enter a symbol or numeric conid.', true);
+            return false;
+        }
+        if (symbol === state.symbol) {
+            updatePanelHeader(state);
+            return false;
+        }
+
+        captureTimeRange(state);
+        state.symbol = symbol;
+        state.conid = null;
+        state.isRestoringTimeRange = Boolean(state.savedTimeRange);
+        saveWorkspace();
+        updatePanelHeader(state);
+        loadInitialChunk(state, false);
+        return true;
     }
 
     function commitChartSymbolChange(state) {
         const input = state.panel.querySelector('.chart-symbol-input');
-        const symbol = normalizeSymbol(input.value);
-        if (!symbol) {
+        if (!updateChartSymbol(state, input.value)) {
             input.value = state.symbol;
-            setStatus('Enter a symbol or numeric conid.', true);
-            return;
         }
-        if (symbol === state.symbol) {
-            input.value = state.symbol;
+    }
+
+    function loadWatchlistSymbolInFocusedChart(symbol) {
+        if (focusedChartId === null) {
+            focusSoleChart();
+        }
+
+        const state = focusedChartId !== null ? charts.get(focusedChartId) : null;
+        if (!state) {
+            setStatus('Select a chart before loading a watchlist symbol.', true);
             return;
         }
 
-        state.symbol = symbol;
-        state.conid = null;
-        state.savedTimeRange = null;
-        state.isRestoringTimeRange = false;
-        saveWorkspace();
-        updatePanelHeader(state);
-        loadInitialChunk(state, false);
+        setFocusedWatchlistSymbol(symbol);
+        updateChartSymbol(state, symbol);
     }
 
     function updateRequestDebug(state, text = '') {
-        const requestEl = state.panel.querySelector('.chart-request');
-        const fallback = state.lastRequestUrl ? `${state.lastLoadReason}: ${state.lastRequestUrl}` : `${state.symbol} · ${state.bar} · chunk ${state.chunkPeriod}`;
-        requestEl.textContent = text || fallback;
-        requestEl.title = requestEl.textContent;
+        state.lastDebugText = text || (state.lastRequestUrl ? `${state.lastLoadReason}: ${state.lastRequestUrl}` : `${state.symbol} · ${state.bar} · chunk ${state.chunkPeriod}`);
     }
 
     function updateCachePill(state, cache) {
@@ -1408,11 +1477,16 @@ if (file_exists($localConfigPath)) {
         state.panel.querySelector('.chart-message').textContent = message || '';
     }
 
-    function describeRange(state) {
-        if (!state.candles.length) return '';
-        const first = new Date(state.candles[0].time * 1000).toLocaleString();
-        const last = new Date(state.candles[state.candles.length - 1].time * 1000).toLocaleString();
-        return `${state.candles.length} bars · ${first} → ${last}`;
+    function autoFitChart(state) {
+        state.chart.priceScale('right').applyOptions({
+            autoScale: true,
+            scaleMargins: { top: 0.08, bottom: 0.26 }
+        });
+        state.chart.priceScale('volume').applyOptions({
+            scaleMargins: { top: 0.78, bottom: 0 },
+            borderVisible: false
+        });
+        setStatus(`${state.symbol} price scale auto-fit`);
     }
 
     function describeRequest(state, force, reason) {
@@ -1523,7 +1597,7 @@ if (file_exists($localConfigPath)) {
 
         try {
             const startedAt = performance.now();
-            const response = await fetch(state.lastRequestUrl);
+            const response = await queuedMarketDataFetch(state.lastRequestUrl);
             const data = await response.json();
             const elapsedMs = Math.round(performance.now() - startedAt);
             if (!response.ok) {
@@ -1563,7 +1637,6 @@ if (file_exists($localConfigPath)) {
                 }
             }
             shouldBackfillSavedRange = needsSavedTimeRangeBackfill(state);
-            state.panel.querySelector('.chart-range').textContent = describeRange(state);
             updateCachePill(state, data.cache);
             setPanelMessage(state, '');
             updateRequestDebug(state, `${state.lastLoadReason}: ${state.lastRequestUrl} · ${elapsedMs}ms · ${candles.length} bars · ${data.cache?.hit ? 'cache hit' : 'IBKR fetch'}`);
@@ -1575,7 +1648,6 @@ if (file_exists($localConfigPath)) {
                 updateRequestDebug(state, `${message}: ${state.lastRequestUrl}`);
                 setStatus(`${state.symbol} ${state.bar}: ${message}`);
                 if (state.candles.length) {
-                    state.panel.querySelector('.chart-range').textContent = describeRange(state);
                     restoreSavedTimeRange(state);
                 }
                 shouldBackfillSavedRange = false;
@@ -1691,8 +1763,14 @@ if (file_exists($localConfigPath)) {
     });
     watchlistItemsEl.addEventListener('click', (event) => {
         const removeButton = event.target.closest('[data-remove-symbol]');
-        if (!removeButton) return;
-        removeWatchlistSymbol(removeButton.getAttribute('data-remove-symbol'));
+        if (removeButton) {
+            removeWatchlistSymbol(removeButton.getAttribute('data-remove-symbol'));
+            return;
+        }
+
+        const row = event.target.closest('[data-symbol]');
+        if (!row) return;
+        loadWatchlistSymbolInFocusedChart(row.getAttribute('data-symbol'));
     });
     gridRowsInput.addEventListener('change', applyGridDimensions);
     gridColsInput.addEventListener('change', applyGridDimensions);

@@ -31,6 +31,7 @@ CREATE TABLE `marketdata_history_bars` (
   `symbol` varchar(32) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
   `sec_type` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL DEFAULT 'STK',
   `exchange` varchar(32) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
+  `exchange_key` varchar(32) COLLATE utf8mb4_unicode_ci GENERATED ALWAYS AS (coalesce(`exchange`,_utf8mb4'')) STORED,
   `period_value` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL,
   `bar_value` varchar(16) COLLATE utf8mb4_unicode_ci NOT NULL,
   `start_time` varchar(32) COLLATE utf8mb4_unicode_ci DEFAULT NULL,
@@ -47,10 +48,12 @@ CREATE TABLE `marketdata_history_bars` (
   `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   UNIQUE KEY `marketdata_history_bar_unique` (`cache_key`,`bar_time`),
+  UNIQUE KEY `marketdata_history_bar_identity_unique` (`conid`,`sec_type`,`exchange_key`,`bar_value`,`outside_rth`,`source_value`,`bar_time`),
   KEY `marketdata_history_lookup` (`conid`,`period_value`,`bar_value`,`outside_rth`,`source_value`),
   KEY `marketdata_history_bar_time` (`conid`,`bar_time`),
-  KEY `marketdata_history_fetched_at` (`fetched_at`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+  KEY `marketdata_history_fetched_at` (`fetched_at`),
+  KEY `marketdata_history_bar_identity_lookup` (`conid`,`sec_type`,`exchange_key`,`bar_value`,`outside_rth`,`source_value`,`bar_time`,`fetched_at`)
+) ENGINE=InnoDB AUTO_INCREMENT=14222 DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -66,4 +69,4 @@ CREATE TABLE `marketdata_history_bars` (
 /*!40101 SET COLLATION_CONNECTION=@OLD_COLLATION_CONNECTION */;
 /*!40111 SET SQL_NOTES=@OLD_SQL_NOTES */;
 
--- Dump completed on 2026-05-16 14:05:16
+-- Dump completed on 2026-05-17 11:51:02
