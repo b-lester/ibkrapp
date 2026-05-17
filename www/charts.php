@@ -574,6 +574,20 @@ if (file_exists($localConfigPath)) {
             background: #1d262b;
         }
 
+        #max-panel-host {
+            display: none;
+            position: fixed;
+            inset: 0;
+            z-index: 200;
+            background: var(--bg);
+        }
+
+        #max-panel-host .chart-panel {
+            height: 100%;
+            border-radius: 0;
+            border: none;
+        }
+
         @media (max-width: 680px) {
             .topbar {
                 align-items: stretch;
@@ -649,6 +663,7 @@ if (file_exists($localConfigPath)) {
         </aside>
     </div>
 </div>
+<div id="max-panel-host"></div>
 
 <script>
     const workspaceEl = document.getElementById('workspace');
@@ -688,6 +703,9 @@ if (file_exists($localConfigPath)) {
         '1w': '2y',
         '1m': '10y'
     };
+
+    const maxPanelHost = document.getElementById('max-panel-host');
+    let maximizedChartId = null;
 
     let nextChartId = 1;
     const charts = new Map();
@@ -1244,6 +1262,7 @@ if (file_exists($localConfigPath)) {
                     <select class="chart-bar-select" title="Bar time period">
                         ${barOptionsHtml(state.bar)}
                     </select>
+                    <button class="icon-button maximize-chart" type="button" title="Maximize">⤢</button>
                     <button class="icon-button refresh-chart" type="button" title="Refresh">↻</button>
                     <button class="icon-button close-chart" type="button" title="Close">×</button>
                 </div>
@@ -1352,6 +1371,7 @@ if (file_exists($localConfigPath)) {
         };
 
         panel.querySelector('.close-chart').addEventListener('click', () => removeChart(chartState.id));
+        panel.querySelector('.maximize-chart').addEventListener('click', () => toggleMaximizeChart(chartState));
         panel.querySelector('.refresh-chart').addEventListener('click', () => loadInitialChunk(chartState, false));
         panel.querySelector('.auto-fit-chart').addEventListener('click', () => autoFitChart(chartState));
         panel.addEventListener('pointerdown', () => setFocusedChart(chartState.id));
@@ -1735,9 +1755,39 @@ if (file_exists($localConfigPath)) {
         });
     }
 
+    function toggleMaximizeChart(state) {
+        if (maximizedChartId === state.id) {
+            // Restore: put panel back into the grid before its saved next sibling
+            if (state._maxNextSibling && state._maxNextSibling.parentNode === chartGrid) {
+                chartGrid.insertBefore(state.panel, state._maxNextSibling);
+            } else {
+                chartGrid.appendChild(state.panel);
+            }
+            state._maxNextSibling = null;
+            maxPanelHost.style.display = 'none';
+            maximizedChartId = null;
+            const btn = state.panel.querySelector('.maximize-chart');
+            if (btn) { btn.title = 'Maximize'; btn.textContent = '⤢'; }
+        } else {
+            // Maximize: remember grid position, move panel to host
+            state._maxNextSibling = state.panel.nextElementSibling;
+            maxPanelHost.appendChild(state.panel);
+            maxPanelHost.style.display = 'block';
+            maximizedChartId = state.id;
+            const btn = state.panel.querySelector('.maximize-chart');
+            if (btn) { btn.title = 'Restore'; btn.textContent = '⤡'; }
+        }
+        state.chart.applyOptions({ autoSize: true });
+        positionChunkLoaders(state);
+    }
+
     function removeChart(id) {
         const state = charts.get(id);
         if (!state) return;
+        if (maximizedChartId === id) {
+            maxPanelHost.style.display = 'none';
+            maximizedChartId = null;
+        }
         if (state.timeRangeSaveTimer !== null) {
             window.clearTimeout(state.timeRangeSaveTimer);
         }
