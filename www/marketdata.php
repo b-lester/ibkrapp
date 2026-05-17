@@ -31,6 +31,7 @@ $GATEWAY_SCHEME = 'https';
 $BASE = "{$GATEWAY_SCHEME}://{$GATEWAY_HOST}:{$GATEWAY_PORT}/v1/api";
 $INSECURE_TLS = true;
 $DEFAULT_CACHE_TTL_SECONDS = 60 * 60 * 24 * 183; // Roughly six months.
+$cacheUnavailableReason = null;
 
 class GatewayHttpException extends RuntimeException {
     public int $statusCode;
@@ -226,6 +227,9 @@ function resolve_symbol(string $base, string $symbol, string $secType, bool $ins
 }
 
 function get_optional_db_connection(): ?mysqli {
+    global $cacheUnavailableReason;
+    $cacheUnavailableReason = null;
+
     if (!function_exists('getDbConnection')) return null;
 
     $outputLevel = ob_get_level();
@@ -240,6 +244,7 @@ function get_optional_db_connection(): ?mysqli {
         while (ob_get_level() > $outputLevel) {
             ob_end_clean();
         }
+        $cacheUnavailableReason = $e->getMessage();
         return null;
     }
 }
@@ -247,6 +252,53 @@ function get_optional_db_connection(): ?mysqli {
 function marketdata_cache_key(array $parts): string {
     ksort($parts);
     return hash('sha256', json_encode($parts, JSON_UNESCAPED_SLASHES));
+}
+
+function duration_seconds(string $value): int {
+    if (!preg_match('/^([1-9][0-9]{0,2}|1000)(min|h|d|w|m|y)$/', $value, $matches)) {
+        return 0;
+    }
+
+    $amount = (int)$matches[1];
+    $unit = $matches[2];
+    if ($unit === 'min') return $amount * 60;
+    if ($unit === 'h') return $amount * 60 * 60;
+    if ($unit === 'd') return $amount * 24 * 60 * 60;
+    if ($unit === 'w') return $amount * 7 * 24 * 60 * 60;
+    if ($unit === 'm') return $amount * 30 * 24 * 60 * 60;
+    return $amount * 365 * 24 * 60 * 60;
+}
+
+function ibkr_start_time_to_ms(?string $startTime): ?int {
+    if ($startTime === null) return null;
+    $date = DateTimeImmutable::createFromFormat('!Ymd-H:i:s', $startTime, new DateTimeZone('UTC'));
+    if (!$date) return null;
+    return $date->getTimestamp() * 1000;
+}
+
+function minimum_cache_bars_for_request(string $period, string $bar): int {
+    $periodSeconds = duration_seconds($period);
+    $barSeconds = duration_seconds($bar);
+    if ($periodSeconds <= 0 || $barSeconds <= 0) return 1;
+
+    $calendarBars = (int)floor($periodSeconds / $barSeconds);
+    if ($calendarBars <= 10) return 1;
+
+    // RTH data has large calendar gaps. Requiring 20% avoids partial-window hits
+    // while still allowing historical chunks to be reused across adjacent days.
+    return max(5, (int)floor($calendarBars * 0.2));
+}
+
+function cached_row_to_bar(array $row): array {
+    return [
+        't' => (int)$row['bar_time'],
+        'isoTime' => (string)$row['bar_time_iso'],
+        'o' => $row['open_price'] !== null ? (float)$row['open_price'] : null,
+        'h' => $row['high_price'] !== null ? (float)$row['high_price'] : null,
+        'l' => $row['low_price'] !== null ? (float)$row['low_price'] : null,
+        'c' => $row['close_price'] !== null ? (float)$row['close_price'] : null,
+        'v' => $row['volume'] !== null ? (float)$row['volume'] : null,
+    ];
 }
 
 function load_cached_history(mysqli $db, string $cacheKey, int $maxAgeSeconds): ?array {
@@ -274,21 +326,103 @@ function load_cached_history(mysqli $db, string $cacheKey, int $maxAgeSeconds): 
     $fetchedAt = null;
     while ($result && ($row = $result->fetch_assoc())) {
         $fetchedAt = $fetchedAt === null ? (int)$row['fetched_at'] : min($fetchedAt, (int)$row['fetched_at']);
-        $bars[] = [
-            't' => (int)$row['bar_time'],
-            'isoTime' => (string)$row['bar_time_iso'],
-            'o' => $row['open_price'] !== null ? (float)$row['open_price'] : null,
-            'h' => $row['high_price'] !== null ? (float)$row['high_price'] : null,
-            'l' => $row['low_price'] !== null ? (float)$row['low_price'] : null,
-            'c' => $row['close_price'] !== null ? (float)$row['close_price'] : null,
-            'v' => $row['volume'] !== null ? (float)$row['volume'] : null,
-        ];
+        $bars[] = cached_row_to_bar($row);
     }
     $stmt->close();
 
     if (empty($bars) || $fetchedAt === null) return null;
 
     if ($maxAgeSeconds > 0 && (time() - $fetchedAt) > $maxAgeSeconds) {
+        return null;
+    }
+
+    return [
+        'payload' => [
+            'data' => $bars,
+            'points' => count($bars),
+        ],
+        'fetched_at' => $fetchedAt,
+    ];
+}
+
+function load_cached_history_by_bars(
+    mysqli $db,
+    string $conid,
+    string $secType,
+    ?string $exchange,
+    string $period,
+    string $bar,
+    ?string $startTime,
+    bool $outsideRth,
+    string $source,
+    int $maxAgeSeconds
+): ?array {
+    $periodSeconds = duration_seconds($period);
+    if ($periodSeconds <= 0) return null;
+
+    $endMs = ibkr_start_time_to_ms($startTime);
+    if ($endMs === null) {
+        $endMs = time() * 1000;
+    }
+    $startMs = $endMs - ($periodSeconds * 1000);
+    $freshAfter = $maxAgeSeconds > 0 ? time() - $maxAgeSeconds : 0;
+    $outsideRthInt = $outsideRth ? 1 : 0;
+    $conidInt = (int)$conid;
+
+    $stmt = $db->prepare("
+        SELECT
+            id,
+            bar_time,
+            bar_time_iso,
+            open_price,
+            high_price,
+            low_price,
+            close_price,
+            volume,
+            fetched_at
+        FROM marketdata_history_bars
+        WHERE conid = ?
+          AND sec_type = ?
+          AND ((? IS NULL AND exchange IS NULL) OR exchange = ?)
+          AND bar_value = ?
+          AND outside_rth = ?
+          AND source_value = ?
+          AND bar_time > ?
+          AND bar_time <= ?
+          AND fetched_at >= ?
+        ORDER BY bar_time ASC, fetched_at DESC, id DESC
+    ");
+    if (!$stmt) return null;
+
+    $stmt->bind_param(
+        'issssisiii',
+        $conidInt,
+        $secType,
+        $exchange,
+        $exchange,
+        $bar,
+        $outsideRthInt,
+        $source,
+        $startMs,
+        $endMs,
+        $freshAfter
+    );
+    $stmt->execute();
+    $result = $stmt->get_result();
+
+    $bars = [];
+    $seenTimes = [];
+    $fetchedAt = null;
+    while ($result && ($row = $result->fetch_assoc())) {
+        $barTime = (int)$row['bar_time'];
+        if (isset($seenTimes[$barTime])) continue;
+        $seenTimes[$barTime] = true;
+        $fetchedAt = $fetchedAt === null ? (int)$row['fetched_at'] : min($fetchedAt, (int)$row['fetched_at']);
+        $bars[] = cached_row_to_bar($row);
+    }
+    $stmt->close();
+
+    if (count($bars) < minimum_cache_bars_for_request($period, $bar) || $fetchedAt === null) {
         return null;
     }
 
@@ -348,6 +482,7 @@ function save_cached_history(
             (cache_key, conid, symbol, sec_type, exchange, period_value, bar_value, start_time, outside_rth, source_value, bar_time, bar_time_iso, open_price, high_price, low_price, close_price, volume, fetched_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON DUPLICATE KEY UPDATE
+            cache_key = VALUES(cache_key),
             conid = VALUES(conid),
             symbol = VALUES(symbol),
             sec_type = VALUES(sec_type),
@@ -413,6 +548,7 @@ function format_history_response(
     ?string $cacheKey,
     bool $cacheAvailable
 ): array {
+    global $cacheUnavailableReason;
     $rawBars = is_array($history['data'] ?? null) ? $history['data'] : [];
 
     return [
@@ -423,6 +559,7 @@ function format_history_response(
             'key' => $cacheKey,
             'cachedAt' => $cachedAt,
             'cachedAtIso' => $cachedAt !== null ? gmdate('c', $cachedAt) : null,
+            'unavailableReason' => $cacheAvailable ? null : $cacheUnavailableReason,
         ],
         'metadata' => [
             'serverId' => $history['serverId'] ?? null,
@@ -545,6 +682,28 @@ try {
             );
             exit;
         }
+
+        $cachedByBars = load_cached_history_by_bars($db, $conid, $secType, $exchange, $period, $bar, $startTime, $outsideRth, $source, $cacheTtl);
+        if ($cachedByBars !== null) {
+            echo json_encode(
+                format_history_response($cachedByBars['payload'], [
+                    'conid' => $conid,
+                    'exchange' => $exchange,
+                    'period' => $period,
+                    'bar' => $bar,
+                    'startTime' => $startTime,
+                    'outsideRth' => $outsideRth,
+                    'source' => $source,
+                    'symbol' => $symbol,
+                    'secType' => $secType,
+                    'resolvedContract' => $resolvedContract,
+                    'force' => $force,
+                    'cacheTtl' => $cacheTtl,
+                ], true, $cachedByBars['fetched_at'], $cacheKey, true),
+                JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES
+            );
+            exit;
+        }
     }
 
     $cookieJar = sys_get_temp_dir() . '/ibkr_cpg_cookiejar.txt';
@@ -602,6 +761,15 @@ try {
             );
             exit;
         }
+
+        $cachedByBars = load_cached_history_by_bars($db, $conid, $secType, $exchange, $period, $bar, $startTime, $outsideRth, $source, $cacheTtl);
+        if ($cachedByBars !== null) {
+            echo json_encode(
+                format_history_response($cachedByBars['payload'], $requestPayload, true, $cachedByBars['fetched_at'], $cacheKey, true),
+                JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES
+            );
+            exit;
+        }
     }
 
     $query = [
@@ -650,6 +818,7 @@ try {
             'available' => isset($db) && $db instanceof mysqli,
             'key' => $cacheKey ?? null,
             'hit' => false,
+            'unavailableReason' => (isset($db) && $db instanceof mysqli) ? null : ($cacheUnavailableReason ?? null),
         ],
     ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
 } catch (Exception $e) {
