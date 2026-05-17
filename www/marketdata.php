@@ -228,9 +228,18 @@ function resolve_symbol(string $base, string $symbol, string $secType, bool $ins
 function get_optional_db_connection(): ?mysqli {
     if (!function_exists('getDbConnection')) return null;
 
+    $outputLevel = ob_get_level();
+    ob_start();
     try {
-        return getDbConnection();
+        $db = @getDbConnection();
+        while (ob_get_level() > $outputLevel) {
+            ob_end_clean();
+        }
+        return $db;
     } catch (Throwable $e) {
+        while (ob_get_level() > $outputLevel) {
+            ob_end_clean();
+        }
         return null;
     }
 }
@@ -622,11 +631,26 @@ try {
         'error' => $e->getMessage(),
     ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
 } catch (GatewayHttpException $e) {
-    http_response_code($e->statusCode);
+    $statusCode = $e->statusCode >= 500 ? 502 : $e->statusCode;
+    http_response_code($statusCode);
     $gatewayBody = json_decode($e->responseBody, true);
+    $isAuthFailure = $e->statusCode === 401;
     echo json_encode([
-        'error' => $e->getMessage(),
+        'error' => $isAuthFailure
+            ? 'Not authenticated. Open the gateway login page on the host and log in first.'
+            : "IBKR Gateway returned HTTP {$e->statusCode}.",
+        'login_url' => $isAuthFailure ? "{$GATEWAY_SCHEME}://localhost:{$GATEWAY_PORT}/" : null,
+        'upstream' => [
+            'service' => 'IBKR Client Portal Gateway',
+            'status' => $e->statusCode,
+        ],
         'gateway_response' => $gatewayBody ?? $e->responseBody,
+        'request' => $requestPayload ?? null,
+        'cache' => [
+            'available' => isset($db) && $db instanceof mysqli,
+            'key' => $cacheKey ?? null,
+            'hit' => false,
+        ],
     ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
 } catch (Exception $e) {
     http_response_code(500);

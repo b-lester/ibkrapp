@@ -1,5 +1,13 @@
 <?php
 header('Content-Type: text/html; charset=utf-8');
+$assetVersion = '1';
+$localConfigPath = dirname(__DIR__) . '/localconfig.php';
+if (file_exists($localConfigPath)) {
+    require $localConfigPath;
+    if (isset($config['cachebuster'])) {
+        $assetVersion = (string)$config['cachebuster'];
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -1821,76 +1829,16 @@ header('Content-Type: text/html; charset=utf-8');
         }
     });
 
-    let isReauthenticating = false;
-
-    async function manualReauthenticate() {
-        if (isReauthenticating) return;
-        isReauthenticating = true;
-
-        const authText = document.getElementById('auth-text');
-        authText.innerText = 'Re-authenticating...';
-        try {
-            const response = await fetch('reauthenticate_proxy.php', { method: 'POST' });
-            // Even if response is OK, we need to check if we are actually authenticated now
-            await tickleSession(true); // Pass true to indicate this is a check after re-auth
-            
-            const isAuthenticated = document.getElementById('auth-dot').classList.contains('authenticated');
-            if (!isAuthenticated) {
-                // If still not authenticated after re-auth attempt, show Login link
-                authText.innerHTML = 'Re-auth failed. (<a href="https://localhost:5050/" target="_blank">Login</a>)';
-            }
-        } catch (error) {
-            console.error('Manual re-auth error:', error);
-            authText.innerHTML = 'Re-auth failed. (<a href="https://localhost:5050/" target="_blank">Login</a>)';
-        } finally {
-            isReauthenticating = false;
-        }
-    }
-
-    async function tickleSession(isAfterManualReauth = false) {
-        // Only skip if we are in the middle of re-authenticating (unless this IS the check after re-auth)
-        if (isReauthenticating && !isAfterManualReauth) return;
-
-        const authDot = document.getElementById('auth-dot');
-        const authText = document.getElementById('auth-text');
-        
-        try {
-            const response = await fetch('tickle_proxy.php', {
-                method: 'GET'
-            });
-            
-            const data = await response.json();
-            const isAuthenticated = data.iserver && data.iserver.authStatus && data.iserver.authStatus.authenticated === true;
-            
-            if (isAuthenticated) {
-                authDot.className = 'status-dot authenticated';
-                authText.innerText = 'Session Active';
-            } else {
-                authDot.className = 'status-dot unauthenticated';
-                // Only show Re-authenticate if we haven't just tried it and failed, 
-                // and if we aren't already showing a Login link.
-                if (!isAfterManualReauth && !authText.innerHTML.includes('localhost:5050')) {
-                    authText.innerHTML = 'Session Expired (<a href="#" onclick="manualReauthenticate(); return false;">Re-authenticate</a>)';
-                }
-            }
-        } catch (error) {
-            console.error('Tickle error:', error);
-            authDot.className = 'status-dot unauthenticated';
-            if (!isAfterManualReauth && !authText.innerHTML.includes('localhost:5050')) {
-                authText.innerHTML = 'Connection Error (<a href="#" onclick="manualReauthenticate(); return false;">Re-authenticate</a>)';
-            }
-        }
-    }
-
     function requiredReturnPercent(days, monthlyTargetPercent = 3) {
         const monthlyFactor = 1 + (monthlyTargetPercent / 100);
         const periodFactor = Math.pow(monthlyFactor, days / 30);
         return (periodFactor - 1) * 100;
     }
 
-    // Tickle every 30 seconds
-    tickleSession();
-    setInterval(tickleSession, 30000);
+</script>
+<script src="auth_status.js?v=<?= htmlspecialchars($assetVersion, ENT_QUOTES) ?>"></script>
+<script>
+    startAuthStatusPolling();
 </script>
 
 </body>

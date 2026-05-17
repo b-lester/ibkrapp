@@ -1,5 +1,13 @@
 <?php
 header('Content-Type: text/html; charset=utf-8');
+$assetVersion = '1';
+$localConfigPath = dirname(__DIR__) . '/localconfig.php';
+if (file_exists($localConfigPath)) {
+    require $localConfigPath;
+    if (isset($config['cachebuster'])) {
+        $assetVersion = (string)$config['cachebuster'];
+    }
+}
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -75,6 +83,41 @@ header('Content-Type: text/html; charset=utf-8');
         .nav-link:hover {
             color: var(--text);
             border-color: #45545e;
+        }
+
+        .auth-status {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-left: auto;
+            color: var(--muted);
+            font-size: 12px;
+            white-space: nowrap;
+        }
+
+        .auth-status a {
+            color: #8fd2c8;
+            text-decoration: none;
+        }
+
+        .auth-status a:hover {
+            text-decoration: underline;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: #7c8790;
+            flex: 0 0 auto;
+        }
+
+        .status-dot.authenticated {
+            background-color: #27ae60;
+        }
+
+        .status-dot.unauthenticated {
+            background-color: #e74c3c;
         }
 
         .control-group {
@@ -427,6 +470,10 @@ header('Content-Type: text/html; charset=utf-8');
             <input id="grid-cols-input" class="layout-number" type="number" min="1" max="12" step="1" value="1">
         </div>
         <button id="add-chart-button" class="button primary" type="button">Add Chart</button>
+        <div class="auth-status">
+            <div id="auth-dot" class="status-dot"></div>
+            <span id="auth-text">Checking session...</span>
+        </div>
     </div>
     <div id="status-bar" class="status-bar">Ready</div>
     <div id="charts-grid" class="charts-grid"></div>
@@ -1004,6 +1051,36 @@ header('Content-Type: text/html; charset=utf-8');
         return Array.from(byTime.values()).sort((a, b) => a.time - b.time);
     }
 
+    function visibleLogicalRange(state) {
+        if (!state.chart.timeScale().getVisibleLogicalRange) return null;
+        const range = state.chart.timeScale().getVisibleLogicalRange();
+        if (!range) return null;
+        const from = Number(range.from);
+        const to = Number(range.to);
+        if (!Number.isFinite(from) || !Number.isFinite(to) || from >= to) return null;
+        return { from, to };
+    }
+
+    function prependShift(existingCandles, mergedCandles) {
+        if (!existingCandles.length || !mergedCandles.length) return 0;
+        const previousFirstTime = existingCandles[0].time;
+        const index = mergedCandles.findIndex((bar) => bar.time === previousFirstTime);
+        return index > 0 ? index : 0;
+    }
+
+    function restoreLogicalRangeAfterPrepend(state, range, shift) {
+        if (!range || shift <= 0 || !state.chart.timeScale().setVisibleLogicalRange) return false;
+        state.chart.timeScale().setVisibleLogicalRange({
+            from: range.from + shift,
+            to: range.to + shift
+        });
+        return true;
+    }
+
+    function unavailableChunkMessage(reason, startTime) {
+        return startTime ? `${reason} unavailable for chunk ending before ${startTime}` : `${reason} unavailable`;
+    }
+
     async function loadChunk(state, options = {}) {
         const force = Boolean(options.force);
         const reason = options.reason || 'load';
@@ -1012,6 +1089,7 @@ header('Content-Type: text/html; charset=utf-8');
         const chunkId = options.chunkId || `${reason}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
         const targetTime = options.targetTime || null;
         let shouldBackfillSavedRange = false;
+        let shouldFinishTimeRangeRestore = true;
 
         if (mode === 'replace' && state.isInitialLoading) {
             updateRequestDebug(state, `Ignored ${reason}: initial load already in progress`);
@@ -1035,6 +1113,9 @@ header('Content-Type: text/html; charset=utf-8');
             const data = await response.json();
             const elapsedMs = Math.round(performance.now() - startedAt);
             if (!response.ok) {
+                if (response.status === 401 && window.showSessionExpired) {
+                    window.showSessionExpired();
+                }
                 throw new Error(data.error || `Market data failed: ${response.status}`);
             }
 
@@ -1048,7 +1129,10 @@ header('Content-Type: text/html; charset=utf-8');
                 saveWorkspace();
             }
 
+            const previousCandles = state.candles;
+            const previousLogicalRange = mode === 'prepend' ? visibleLogicalRange(state) : null;
             state.candles = mode === 'prepend' ? mergeCandles(state.candles, candles) : candles;
+            const logicalShift = mode === 'prepend' ? prependShift(previousCandles, state.candles) : 0;
             if (state.candles.length) {
                 state.oldestRequestedTime = state.candles[0].time;
             }
@@ -1059,7 +1143,10 @@ header('Content-Type: text/html; charset=utf-8');
                     state.chart.timeScale().fitContent();
                 }
             } else {
-                restoreSavedTimeRange(state);
+                const restoredLogicalRange = restoreLogicalRangeAfterPrepend(state, previousLogicalRange, logicalShift);
+                if (!restoredLogicalRange || state.isRestoringTimeRange) {
+                    restoreSavedTimeRange(state);
+                }
             }
             shouldBackfillSavedRange = needsSavedTimeRangeBackfill(state);
             state.panel.querySelector('.chart-range').textContent = describeRange(state);
@@ -1068,6 +1155,19 @@ header('Content-Type: text/html; charset=utf-8');
             updateRequestDebug(state, `${state.lastLoadReason}: ${state.lastRequestUrl} · ${elapsedMs}ms · ${candles.length} bars · ${data.cache?.hit ? 'cache hit' : 'IBKR fetch'}`);
             setStatus(`${state.symbol} ${state.bar} ${state.chunkPeriod} chunk loaded in ${elapsedMs}ms (${data.cache?.hit ? 'cache' : 'IBKR'})`);
         } catch (error) {
+            if (mode !== 'replace') {
+                console.warn(error);
+                const message = unavailableChunkMessage(reason, startTime);
+                updateRequestDebug(state, `${message}: ${state.lastRequestUrl}`);
+                setStatus(`${state.symbol} ${state.bar}: ${message}`);
+                if (state.candles.length) {
+                    state.panel.querySelector('.chart-range').textContent = describeRange(state);
+                    restoreSavedTimeRange(state);
+                }
+                shouldBackfillSavedRange = false;
+                shouldFinishTimeRangeRestore = false;
+                return;
+            }
             console.error(error);
             state.isRestoringTimeRange = false;
             setPanelMessage(state, error.message, true);
@@ -1078,7 +1178,7 @@ header('Content-Type: text/html; charset=utf-8');
             removeChunkLoader(state, chunkId);
             if (shouldBackfillSavedRange) {
                 window.setTimeout(() => ensureSavedTimeRangeLoaded(state), 0);
-            } else {
+            } else if (shouldFinishTimeRangeRestore) {
                 finishTimeRangeRestore(state);
             }
         }
@@ -1199,7 +1299,11 @@ header('Content-Type: text/html; charset=utf-8');
         }
     }
 
+</script>
+<script src="auth_status.js?v=<?= htmlspecialchars($assetVersion, ENT_QUOTES) ?>"></script>
+<script>
     initializeCharts();
+    startAuthStatusPolling();
 </script>
 </body>
 </html>

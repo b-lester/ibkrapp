@@ -40,8 +40,40 @@ if ($INSECURE_TLS) {
 }
 
 $body = curl_exec($ch);
+$curlError = curl_error($ch);
 $code = (int)curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
 curl_close($ch);
+
+if ($code === 401) {
+    http_response_code(401);
+    echo json_encode([
+        'error' => 'Not authenticated. Open the gateway login page on the host and log in first.',
+        'login_url' => "{$GATEWAY_SCHEME}://localhost:{$GATEWAY_PORT}/",
+        'iserver' => [
+            'authStatus' => [
+                'authenticated' => false,
+            ],
+        ],
+        'upstream' => [
+            'service' => 'IBKR Client Portal Gateway',
+            'status' => 401,
+        ],
+    ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+    exit;
+}
+
+if ($body === false || trim((string)$body) === '' || $code === 0) {
+    http_response_code(502);
+    echo json_encode([
+        'error' => 'IBKR Gateway connection failed.',
+        'upstream' => [
+            'service' => 'IBKR Client Portal Gateway',
+            'status' => $code ?: null,
+        ],
+        'details' => $curlError ?: null,
+    ], JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+    exit;
+}
 
 http_response_code($code);
 echo $body;
