@@ -389,15 +389,28 @@ if (file_exists($localConfigPath)) {
 
         .chart-title {
             display: flex;
-            align-items: baseline;
+            align-items: center;
             gap: 8px;
             min-width: 0;
         }
 
-        .chart-symbol {
+        .chart-symbol-input {
+            width: 96px;
+            min-height: 28px;
+            padding: 3px 6px;
+            color: var(--text);
+            background: var(--input);
+            border: 1px solid transparent;
+            border-radius: 6px;
             font-size: 15px;
             font-weight: 800;
+            text-transform: uppercase;
             white-space: nowrap;
+        }
+
+        .chart-symbol-input:hover,
+        .chart-symbol-input:focus {
+            border-color: var(--panel-border);
         }
 
         .chart-meta {
@@ -1177,7 +1190,7 @@ if (file_exists($localConfigPath)) {
         panel.innerHTML = `
             <div class="chart-header">
                 <div class="chart-title">
-                    <span class="chart-symbol"></span>
+                    <input class="chart-symbol-input" autocomplete="off" spellcheck="false" title="Chart symbol">
                     <span class="chart-meta"></span>
                 </div>
                 <div class="chart-actions">
@@ -1295,6 +1308,18 @@ if (file_exists($localConfigPath)) {
         panel.querySelector('.close-chart').addEventListener('click', () => removeChart(chartState.id));
         panel.querySelector('.refresh-chart').addEventListener('click', () => loadInitialChunk(chartState, false));
         panel.addEventListener('pointerdown', () => setFocusedChart(chartState.id));
+        panel.querySelector('.chart-symbol-input').addEventListener('blur', () => commitChartSymbolChange(chartState));
+        panel.querySelector('.chart-symbol-input').addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                commitChartSymbolChange(chartState);
+                event.target.blur();
+            } else if (event.key === 'Escape') {
+                event.preventDefault();
+                event.target.value = chartState.symbol;
+                event.target.blur();
+            }
+        });
         panel.querySelector('.chart-bar-select').addEventListener('change', (event) => {
             chartState.bar = event.target.value;
             chartState.savedTimeRange = null;
@@ -1320,7 +1345,10 @@ if (file_exists($localConfigPath)) {
     }
 
     function updatePanelHeader(state) {
-        state.panel.querySelector('.chart-symbol').textContent = state.symbol;
+        const symbolInputEl = state.panel.querySelector('.chart-symbol-input');
+        if (symbolInputEl && symbolInputEl.value !== state.symbol) {
+            symbolInputEl.value = state.symbol;
+        }
         state.panel.querySelector('.chart-meta').textContent = `${state.bar} candles · ${state.chunkPeriod || requestPeriodForState(state)} chunks · initial ${state.targetPeriod}`;
         const barSelect = state.panel.querySelector('.chart-bar-select');
         if (barSelect && barSelect.value !== state.bar) {
@@ -1330,6 +1358,28 @@ if (file_exists($localConfigPath)) {
             state.panel.querySelector('.chart-range').textContent = 'No loaded bars yet';
         }
         updateRequestDebug(state);
+    }
+
+    function commitChartSymbolChange(state) {
+        const input = state.panel.querySelector('.chart-symbol-input');
+        const symbol = normalizeSymbol(input.value);
+        if (!symbol) {
+            input.value = state.symbol;
+            setStatus('Enter a symbol or numeric conid.', true);
+            return;
+        }
+        if (symbol === state.symbol) {
+            input.value = state.symbol;
+            return;
+        }
+
+        state.symbol = symbol;
+        state.conid = null;
+        state.savedTimeRange = null;
+        state.isRestoringTimeRange = false;
+        saveWorkspace();
+        updatePanelHeader(state);
+        loadInitialChunk(state, false);
     }
 
     function updateRequestDebug(state, text = '') {
