@@ -2401,6 +2401,10 @@ if (file_exists($localConfigPath)) {
         const chunkId = options.chunkId || `${reason}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
         const targetTime = options.targetTime || null;
         const loadGeneration = state.loadGeneration || 0;
+        const requestBar = state.bar;
+        const requestChunkPeriod = state.chunkPeriod;
+        const requestSymbol = state.symbol;
+        const requestConid = state.conid || null;
         let shouldBackfillSavedRange = false;
         let shouldFinishTimeRangeRestore = true;
 
@@ -2425,7 +2429,13 @@ if (file_exists($localConfigPath)) {
             const response = await queuedMarketDataFetch(state.lastRequestUrl);
             const data = await response.json();
             const elapsedMs = Math.round(performance.now() - startedAt);
-            if (mode === 'replace' && loadGeneration !== state.loadGeneration) {
+            if (
+                loadGeneration !== state.loadGeneration ||
+                requestBar !== state.bar ||
+                requestChunkPeriod !== state.chunkPeriod ||
+                requestSymbol !== state.symbol ||
+                (requestConid !== null && requestConid !== (state.conid || null))
+            ) {
                 updateRequestDebug(state, `Ignored stale ${reason}: ${state.lastRequestUrl}`);
                 return;
             }
