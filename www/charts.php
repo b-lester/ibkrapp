@@ -252,6 +252,35 @@ if (file_exists($localConfigPath)) {
             white-space: nowrap;
         }
 
+        .watchlist-sort-buttons {
+            display: flex;
+            gap: 4px;
+        }
+
+        .watchlist-sort-btn {
+            min-height: 22px;
+            border: 1px solid var(--panel-border);
+            border-radius: 4px;
+            color: var(--muted);
+            background: transparent;
+            padding: 2px 6px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+
+        .watchlist-sort-btn:hover {
+            color: var(--text);
+            border-color: #45545e;
+        }
+
+        .watchlist-sort-btn.active {
+            color: #8fd2c8;
+            border-color: var(--accent);
+            background: rgba(47, 143, 131, 0.12);
+        }
+
         .watchlist-add {
             display: grid;
             grid-template-columns: minmax(0, 1fr) auto;
@@ -684,6 +713,10 @@ if (file_exists($localConfigPath)) {
         <aside id="watchlist-pane" class="watchlist-pane">
             <div class="watchlist-header">
                 <div class="watchlist-title">Watchlist</div>
+                <div class="watchlist-sort-buttons">
+                    <button id="sort-alpha-button" class="watchlist-sort-btn" type="button">A–Z</button>
+                    <button id="sort-change-button" class="watchlist-sort-btn" type="button">%</button>
+                </div>
                 <div id="watchlist-count" class="watchlist-count">0 / 100</div>
             </div>
             <div class="watchlist-add">
@@ -711,6 +744,8 @@ if (file_exists($localConfigPath)) {
     const watchlistItemsEl = document.getElementById('watchlist-items');
     const watchlistCountEl = document.getElementById('watchlist-count');
     const watchlistMessageEl = document.getElementById('watchlist-message');
+    const sortAlphaButton = document.getElementById('sort-alpha-button');
+    const sortChangeButton = document.getElementById('sort-change-button');
 
     const upColor = '#1fa774';
     const downColor = '#dc4c5a';
@@ -747,6 +782,7 @@ if (file_exists($localConfigPath)) {
     let saveWorkspaceTimer = null;
     let watchlistVisible = true;
     let watchlistSymbols = [];
+    let watchlistSort = 'default';
     const watchlistQuotes = new Map();
     let watchlistRefreshToken = 0;
     let focusedChartId = null;
@@ -823,7 +859,8 @@ if (file_exists($localConfigPath)) {
             charts: Array.from(charts.values()).map(serializeChartState),
             watchlist: {
                 visible: watchlistVisible,
-                symbols: watchlistSymbols
+                symbols: watchlistSymbols,
+                sort: watchlistSort
             }
         };
         if (saveWorkspaceTimer !== null) {
@@ -928,9 +965,60 @@ if (file_exists($localConfigPath)) {
         });
     }
 
+    function sortedWatchlistSymbols() {
+        if (watchlistSort === 'default') return watchlistSymbols;
+        const copy = [...watchlistSymbols];
+        if (watchlistSort === 'alpha-asc') {
+            copy.sort((a, b) => a.localeCompare(b));
+        } else if (watchlistSort === 'alpha-desc') {
+            copy.sort((a, b) => b.localeCompare(a));
+        } else {
+            const descending = watchlistSort === 'change-desc';
+            copy.sort((a, b) => {
+                const qa = watchlistQuotes.get(a);
+                const qb = watchlistQuotes.get(b);
+                const ca = qa?.status === 'ready' ? Number(qa.percentChange) : null;
+                const cb = qb?.status === 'ready' ? Number(qb.percentChange) : null;
+                if (ca === null && cb === null) return 0;
+                if (ca === null) return 1;
+                if (cb === null) return -1;
+                return descending ? cb - ca : ca - cb;
+            });
+        }
+        return copy;
+    }
+
+    function setWatchlistSort(key) {
+        if (key === 'alpha') {
+            watchlistSort = watchlistSort === 'alpha-asc' ? 'alpha-desc'
+                : watchlistSort === 'alpha-desc' ? 'default'
+                : 'alpha-asc';
+        } else if (key === 'change') {
+            watchlistSort = watchlistSort === 'change-desc' ? 'change-asc'
+                : watchlistSort === 'change-asc' ? 'default'
+                : 'change-desc';
+        }
+        renderWatchlist();
+        saveWorkspace();
+    }
+
     function renderWatchlist() {
         watchlistCountEl.textContent = `${watchlistSymbols.length} / ${watchlistLimit}`;
-        watchlistItemsEl.innerHTML = watchlistSymbols.map((symbol) => {
+
+        const alphaActive = watchlistSort.startsWith('alpha');
+        const changeActive = watchlistSort.startsWith('change');
+        sortAlphaButton.classList.toggle('active', alphaActive);
+        sortChangeButton.classList.toggle('active', changeActive);
+        sortAlphaButton.textContent = watchlistSort === 'alpha-desc' ? 'Z–A' : 'A–Z';
+        sortAlphaButton.title = alphaActive
+            ? `Sorting ${watchlistSort === 'alpha-asc' ? 'A→Z' : 'Z→A'} — click to ${watchlistSort === 'alpha-asc' ? 'reverse' : 'clear'}`
+            : 'Sort alphabetically A→Z';
+        sortChangeButton.textContent = watchlistSort === 'change-asc' ? '% ↑' : '% ↓';
+        sortChangeButton.title = changeActive
+            ? `Sorting ${watchlistSort === 'change-desc' ? 'gainers first' : 'losers first'} — click to ${watchlistSort === 'change-desc' ? 'reverse' : 'clear'}`
+            : 'Sort by % change (gainers first)';
+
+        watchlistItemsEl.innerHTML = sortedWatchlistSymbols().map((symbol) => {
             const quote = watchlistQuotes.get(symbol) || { status: 'loading' };
             const price = quote.status === 'loading' ? 'Loading' : formatPrice(quote.price);
             const change = quote.status === 'error' ? 'Unavailable' : formatPercent(quote.percentChange);
@@ -1881,6 +1969,8 @@ if (file_exists($localConfigPath)) {
     addChartButton.addEventListener('click', addChartFromControls);
     toggleWatchlistButton.addEventListener('click', () => setWatchlistVisible(!watchlistVisible));
     addWatchlistButton.addEventListener('click', addWatchlistSymbol);
+    sortAlphaButton.addEventListener('click', () => setWatchlistSort('alpha'));
+    sortChangeButton.addEventListener('click', () => setWatchlistSort('change'));
     watchlistSymbolInput.addEventListener('keydown', (event) => {
         if (event.key === 'Enter') addWatchlistSymbol();
     });
@@ -1913,6 +2003,8 @@ if (file_exists($localConfigPath)) {
         gridRowsInput.value = savedWorkspace?.rows || '1';
         gridColsInput.value = savedWorkspace?.cols || '1';
         watchlistSymbols = normalizeWatchlistSymbols(savedWorkspace?.watchlist?.symbols || []);
+        watchlistSort = ['alpha-asc', 'alpha-desc', 'change-desc', 'change-asc'].includes(savedWorkspace?.watchlist?.sort)
+            ? savedWorkspace.watchlist.sort : 'default';
         setWatchlistVisible(savedWorkspace?.watchlist?.visible !== false, false);
         renderWatchlist();
         applyGridDimensions();
