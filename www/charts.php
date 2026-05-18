@@ -587,6 +587,37 @@ if (file_exists($localConfigPath)) {
             border-color: #7f5b2c;
         }
 
+        .realtime-pill {
+            border: 1px solid var(--panel-border);
+            border-radius: 999px;
+            padding: 2px 8px;
+            white-space: nowrap;
+            color: var(--muted);
+        }
+
+        .realtime-pill.online {
+            color: #a7ddc7;
+            border-color: #2f6f5c;
+        }
+
+        .realtime-pill.error {
+            color: #ffb4ba;
+            border-color: #8d3f48;
+        }
+
+        .backfill-pill {
+            border: 1px solid var(--panel-border);
+            border-radius: 999px;
+            padding: 2px 8px;
+            white-space: nowrap;
+            color: var(--muted);
+        }
+
+        .backfill-pill.loading {
+            color: #f2c38f;
+            border-color: #7f5b2c;
+        }
+
         .footer-button {
             min-height: 26px;
             border: 1px solid var(--panel-border);
@@ -753,6 +784,11 @@ if (file_exists($localConfigPath)) {
     const defaultNewChartBar = '1d';
     const defaultNewChartPeriod = '1y';
     const maxConcurrentMarketDataRequests = 2;
+    const realtimeWebsocketUrl = 'wss://localhost:5050/v1/api/ws';
+    const realtimeFields = ['31', '70', '71', '82', '83', '84', '86', '6509', '7295', '7296'];
+    const realtimeRenewMs = 9 * 60 * 1000;
+    const realtimeInitialSubscribeDelayMs = 3000;
+    const realtimeSessionCookieName = 'api';
     const chunkPeriodByBar = {
         '1min': '1d',
         '2min': '2d',
@@ -785,10 +821,32 @@ if (file_exists($localConfigPath)) {
     let watchlistSort = 'default';
     const watchlistQuotes = new Map();
     let watchlistRefreshToken = 0;
+    let watchlistClickTimer = null;
     let focusedChartId = null;
     let focusedWatchlistSymbol = null;
     let activeMarketDataRequests = 0;
     const queuedMarketDataRequests = [];
+    let realtimeSocket = null;
+    let realtimeReconnectTimer = null;
+    let realtimeRenewTimer = null;
+    let realtimeInitialSyncTimer = null;
+    let realtimeStatus = 'offline';
+    let realtimeDetail = '';
+    let realtimeSessionPromise = null;
+    const realtimeSubscribedConids = new Set();
+    const pendingRealtimeResubscribeConids = new Set();
+    const realtimeConidStats = new Map();
+    const realtimeSeededCharts = new Set();
+    const realtimeStats = {
+        messages: 0,
+        marketMessages: 0,
+        ticks: 0,
+        lastAt: null,
+        lastTickAt: null,
+        lastTopic: '',
+        lastKeys: '',
+        lastError: ''
+    };
     const barOptions = [
         ['1min', '1m'],
         ['2min', '2m'],
@@ -965,6 +1023,546 @@ if (file_exists($localConfigPath)) {
         });
     }
 
+    function parseMarketNumber(value) {
+        if (value === null || value === undefined) return null;
+        if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+        const normalized = String(value)
+            .replace(/^[A-Z]\s*/i, '')
+            .replace(/[%,$,\s]/g, '');
+        const number = Number(normalized);
+        return Number.isFinite(number) ? number : null;
+    }
+
+    function marketNumberPrefix(value) {
+        if (value === null || value === undefined || typeof value === 'number') return '';
+        const match = String(value).trim().match(/^([A-Z]+)/i);
+        return match ? match[1].toUpperCase() : '';
+    }
+
+    function setRealtimeStatus(status, detail = '') {
+        realtimeStatus = status;
+        realtimeDetail = detail;
+        updateRealtimePills();
+        if (detail) {
+            setStatus(`Realtime ${status}: ${detail}`, status === 'error');
+        }
+    }
+
+    function updateRealtimePills() {
+        const desiredCount = desiredRealtimeConids().size;
+        const subscribedCount = realtimeSubscribedConids.size;
+        const globalLabel = realtimeStatus === 'online'
+            ? `RT ${subscribedCount}/${desiredCount} · ${realtimeStats.ticks} ticks total`
+            : realtimeStatus === 'connecting'
+                ? 'RT connecting'
+                : realtimeStatus === 'error'
+                    ? 'RT error'
+                    : 'RT offline';
+        const titleParts = [
+            `${subscribedCount} realtime subscriptions active out of ${desiredCount}.`,
+            `${realtimeStats.messages} websocket messages, ${realtimeStats.marketMessages} market-data messages, ${realtimeStats.ticks} parsed ticks.`
+        ];
+        if (realtimeStats.lastTopic) titleParts.push(`Last topic: ${realtimeStats.lastTopic}.`);
+        if (realtimeStats.lastKeys) titleParts.push(`Last keys: ${realtimeStats.lastKeys}.`);
+        if (realtimeStats.lastError) titleParts.push(`Last parser note: ${realtimeStats.lastError}.`);
+        for (const pill of document.querySelectorAll('.realtime-pill')) {
+            const state = chartStateForElement(pill);
+            const conid = state?.conid ? String(state.conid) : '';
+            const conidStats = conid ? realtimeConidStats.get(conid) : null;
+            const isSubscribed = conid ? realtimeSubscribedConids.has(conid) : subscribedCount > 0;
+            pill.textContent = conid && realtimeStatus === 'online'
+                ? `RT ${conidStats?.ticks || 0} ticks`
+                : globalLabel;
+            pill.title = realtimeDetail || realtimePillTitle(conid, conidStats, titleParts.join(' '));
+            pill.classList.toggle('online', realtimeStatus === 'online' && isSubscribed);
+            pill.classList.toggle('error', realtimeStatus === 'error');
+        }
+    }
+
+    function chartStateForElement(element) {
+        const panel = element.closest('.chart-panel');
+        if (!panel) return null;
+        for (const state of charts.values()) {
+            if (state.panel === panel) return state;
+        }
+        return null;
+    }
+
+    function realtimePillTitle(conid, stats, fallbackTitle) {
+        if (!conid) return fallbackTitle;
+        const parts = [
+            `conid ${conid}`,
+            `${stats?.messages || 0} realtime messages`,
+            `${stats?.ticks || 0} parsed ticks`
+        ];
+        if (stats?.price !== null && stats?.price !== undefined) parts.push(`last rt price ${formatPrice(stats.price)}`);
+        if (stats?.fields) parts.push(`fields ${stats.fields}`);
+        return parts.join(' · ');
+    }
+
+    async function ensureRealtimeSessionCookie() {
+        if (realtimeSessionPromise !== null) return realtimeSessionPromise;
+
+        realtimeSessionPromise = fetch('realtime_session.php')
+            .then(async (response) => {
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || `Realtime session failed: ${response.status}`);
+                if (!data.apiCookie) throw new Error('Realtime session cookie missing.');
+                document.cookie = `${realtimeSessionCookieName}=${encodeURIComponent(data.apiCookie)}; path=/; SameSite=Lax`;
+                return data.apiCookie;
+            })
+            .catch((error) => {
+                realtimeSessionPromise = null;
+                throw error;
+            });
+
+        return realtimeSessionPromise;
+    }
+
+    function desiredRealtimeConids() {
+        const conids = new Set();
+        for (const state of charts.values()) {
+            if (state.conid) conids.add(String(state.conid));
+        }
+        for (const quote of watchlistQuotes.values()) {
+            if (quote.conid) conids.add(String(quote.conid));
+        }
+        return conids;
+    }
+
+    function realtimeTopic(conid) {
+        return `smd+${conid}+${JSON.stringify({ fields: realtimeFields, snapshot: true, tempo: 1000 })}`;
+    }
+
+    function sendRealtimeSubscription(conid) {
+        if (!realtimeSocket || realtimeSocket.readyState !== WebSocket.OPEN) return;
+        realtimeSocket.send(realtimeTopic(conid));
+        realtimeSubscribedConids.add(String(conid));
+        updateRealtimePills();
+    }
+
+    function forceRealtimeResubscribe(conid) {
+        if (!conid) return;
+        const key = String(conid);
+        if (!realtimeSocket || realtimeSocket.readyState !== WebSocket.OPEN) {
+            pendingRealtimeResubscribeConids.add(key);
+            return;
+        }
+        if (realtimeSubscribedConids.has(key)) {
+            realtimeSocket.send(`umd+${key}+{}`);
+            realtimeSubscribedConids.delete(key);
+            updateRealtimePills();
+        }
+        window.setTimeout(() => sendRealtimeSubscription(key), 350);
+    }
+
+    function flushPendingRealtimeResubscribes() {
+        if (!pendingRealtimeResubscribeConids.size || !realtimeSocket || realtimeSocket.readyState !== WebSocket.OPEN) return;
+        const conids = Array.from(pendingRealtimeResubscribeConids);
+        pendingRealtimeResubscribeConids.clear();
+        for (const conid of conids) {
+            forceRealtimeResubscribe(conid);
+        }
+    }
+
+    function syncRealtimeSubscriptions() {
+        if (!realtimeSocket || realtimeSocket.readyState !== WebSocket.OPEN) return;
+        const desired = desiredRealtimeConids();
+
+        for (const conid of Array.from(realtimeSubscribedConids)) {
+            if (!desired.has(conid)) {
+                realtimeSocket.send(`umd+${conid}+{}`);
+                realtimeSubscribedConids.delete(conid);
+                updateRealtimePills();
+            }
+        }
+
+        for (const conid of desired) {
+            if (!realtimeSubscribedConids.has(conid)) {
+                sendRealtimeSubscription(conid);
+            }
+        }
+    }
+
+    function scheduleRealtimeSubscriptionSync(delayMs = 0) {
+        if (realtimeInitialSyncTimer !== null) {
+            window.clearTimeout(realtimeInitialSyncTimer);
+        }
+        realtimeInitialSyncTimer = window.setTimeout(() => {
+            realtimeInitialSyncTimer = null;
+            syncRealtimeSubscriptions();
+            flushPendingRealtimeResubscribes();
+            if (realtimeStatus === 'online') setRealtimeStatus('online');
+        }, delayMs);
+    }
+
+    function scheduleRealtimeReconnect() {
+        if (realtimeReconnectTimer !== null) return;
+        realtimeReconnectTimer = window.setTimeout(() => {
+            realtimeReconnectTimer = null;
+            connectRealtime();
+        }, 5000);
+    }
+
+    function scheduleRealtimeRenewal() {
+        if (realtimeRenewTimer !== null) {
+            window.clearTimeout(realtimeRenewTimer);
+        }
+        realtimeRenewTimer = window.setTimeout(() => {
+            realtimeSubscribedConids.clear();
+            syncRealtimeSubscriptions();
+            scheduleRealtimeRenewal();
+        }, realtimeRenewMs);
+    }
+
+    async function connectRealtime() {
+        if (realtimeSocket && (realtimeSocket.readyState === WebSocket.OPEN || realtimeSocket.readyState === WebSocket.CONNECTING)) {
+            if (realtimeSocket.readyState === WebSocket.OPEN && realtimeInitialSyncTimer === null) {
+                syncRealtimeSubscriptions();
+            }
+            return;
+        }
+
+        realtimeSocket = null;
+        setRealtimeStatus('connecting', 'getting gateway session');
+        try {
+            await ensureRealtimeSessionCookie();
+        } catch (error) {
+            setRealtimeStatus('error', error.message);
+            scheduleRealtimeReconnect();
+            return;
+        }
+
+        try {
+            realtimeSocket = new WebSocket(realtimeWebsocketUrl);
+        } catch (error) {
+            setRealtimeStatus('error', error.message);
+            scheduleRealtimeReconnect();
+            return;
+        }
+
+        setRealtimeStatus('connecting');
+        const connectTimeout = window.setTimeout(() => {
+            if (realtimeSocket && realtimeSocket.readyState === WebSocket.CONNECTING) {
+                setRealtimeStatus('error', 'websocket did not open. Open https://localhost:5050 once in this browser and accept the gateway certificate.');
+                realtimeSocket.close();
+            }
+        }, 7000);
+        realtimeSocket.addEventListener('open', () => {
+            window.clearTimeout(connectTimeout);
+            realtimeSubscribedConids.clear();
+            setRealtimeStatus('online', 'connected; waiting for gateway stream');
+            scheduleRealtimeSubscriptionSync(realtimeInitialSubscribeDelayMs);
+            scheduleRealtimeRenewal();
+        });
+        realtimeSocket.addEventListener('message', (event) => {
+            if (typeof event.data === 'string') {
+                handleRealtimeMessage(event.data);
+                return;
+            }
+            if (event.data && typeof event.data.text === 'function') {
+                event.data.text()
+                    .then(handleRealtimeMessage)
+                    .catch((error) => {
+                        realtimeStats.lastError = `Could not read websocket message: ${error.message}`;
+                        updateRealtimePills();
+                    });
+            }
+        });
+        realtimeSocket.addEventListener('error', () => {
+            setRealtimeStatus('error', 'websocket connection failed');
+        });
+        realtimeSocket.addEventListener('close', () => {
+            window.clearTimeout(connectTimeout);
+            realtimeSubscribedConids.clear();
+            if (realtimeRenewTimer !== null) {
+                window.clearTimeout(realtimeRenewTimer);
+                realtimeRenewTimer = null;
+            }
+            if (realtimeInitialSyncTimer !== null) {
+                window.clearTimeout(realtimeInitialSyncTimer);
+                realtimeInitialSyncTimer = null;
+            }
+            if (realtimeStatus !== 'error') {
+                setRealtimeStatus('offline');
+            } else {
+                updateRealtimePills();
+            }
+            if (desiredRealtimeConids().size > 0) scheduleRealtimeReconnect();
+        });
+    }
+
+    function ensureRealtime() {
+        if (desiredRealtimeConids().size === 0) return;
+        connectRealtime();
+        if (realtimeInitialSyncTimer === null) {
+            syncRealtimeSubscriptions();
+            flushPendingRealtimeResubscribes();
+        }
+        updateRealtimePills();
+    }
+
+    function realtimeMessagePayload(message) {
+        if (!message || typeof message !== 'object') return {};
+        const args = message.args && typeof message.args === 'object' && !Array.isArray(message.args)
+            ? message.args
+            : {};
+        return { ...message, ...args };
+    }
+
+    function handleRealtimeMessage(rawMessage) {
+        let message;
+        try {
+            message = JSON.parse(rawMessage);
+        } catch (error) {
+            realtimeStats.lastError = 'Received a non-JSON websocket message.';
+            updateRealtimePills();
+            return;
+        }
+        const payload = realtimeMessagePayload(message);
+        const topic = String(payload.topic || message.topic || '');
+        realtimeStats.messages++;
+        realtimeStats.lastAt = Date.now();
+        realtimeStats.lastTopic = topic || '(none)';
+        realtimeStats.lastKeys = Object.keys(payload).slice(0, 10).join(', ');
+
+        if (!topic.startsWith('smd+')) {
+            if (topic === 'sts') scheduleRealtimeSubscriptionSync(0);
+            updateRealtimePills();
+            return;
+        }
+
+        realtimeStats.marketMessages++;
+        const conid = String(payload.conid || topic.split('+')[1] || '');
+        const price = realtimePayloadPrice(payload);
+        const lastPrice = parseMarketNumber(payload['31']);
+        const percentChange = parseMarketNumber(payload['83']);
+        const absoluteChange = parseMarketNumber(payload['82']);
+        const updatedMs = Number(payload._updated || Date.now());
+        if (!conid) return;
+
+        updateRealtimeConidStats(conid, payload, price, updatedMs, price !== null);
+        updateRealtimeWatchlist(conid, price, percentChange, absoluteChange, updatedMs);
+        if (price !== null) {
+            realtimeStats.ticks++;
+            realtimeStats.lastTickAt = Date.now();
+            realtimeStats.lastError = lastPrice === null ? `Using bid/ask-derived price ${formatPrice(price)} for ${conid}.` : '';
+            for (const state of charts.values()) {
+                if (String(state.conid || '') === conid) {
+                    applyRealtimeTickToChart(state, price, payload, updatedMs);
+                }
+            }
+        } else {
+            realtimeStats.lastError = `Market-data message for ${conid} did not include a usable price.`;
+        }
+        updateRealtimePills();
+    }
+
+    function realtimePayloadPrice(payload) {
+        const last = parseMarketNumber(payload['31']);
+        const lastPrefix = marketNumberPrefix(payload['31']);
+        const bid = parseMarketNumber(payload['84']);
+        const ask = parseMarketNumber(payload['86']);
+        const currentClose = parseMarketNumber(payload['7296']);
+        const bookPrice = bid !== null && ask !== null && bid > 0 && ask > 0
+            ? (bid + ask) / 2
+            : bid !== null && bid > 0
+                ? bid
+                : ask !== null && ask > 0
+                    ? ask
+                    : null;
+        if (lastPrefix === 'C' && bookPrice !== null) return bookPrice;
+        if (last !== null) return last;
+        if (currentClose !== null) return currentClose;
+        if (bookPrice !== null) return bookPrice;
+        return null;
+    }
+
+    function realtimeDailyCandlePatch(payload, fallbackPrice, existingCandle = null) {
+        const open = parseMarketNumber(payload['7295']);
+        const high = parseMarketNumber(payload['70']);
+        const low = parseMarketNumber(payload['71']);
+        const lastPrefix = marketNumberPrefix(payload['31']);
+        const last = parseMarketNumber(payload['31']);
+        const close = last !== null && lastPrefix !== 'C'
+            ? last
+            : fallbackPrice;
+        return {
+            open: open ?? existingCandle?.open ?? fallbackPrice,
+            high: high ?? existingCandle?.high ?? fallbackPrice,
+            low: low ?? existingCandle?.low ?? fallbackPrice,
+            close: close ?? existingCandle?.close ?? fallbackPrice
+        };
+    }
+
+    function updateRealtimeConidStats(conid, payload, price, updatedMs, hasUsablePrice) {
+        const key = String(conid);
+        const current = realtimeConidStats.get(key) || { messages: 0, ticks: 0 };
+        realtimeConidStats.set(key, {
+            ...current,
+            messages: current.messages + 1,
+            ticks: current.ticks + (hasUsablePrice ? 1 : 0),
+            lastAt: Date.now(),
+            updatedMs,
+            price,
+            fields: Object.keys(payload).slice(0, 16).join(', ')
+        });
+    }
+
+    function watchlistRowTitle(symbol, quote) {
+        const parts = [];
+        if (quote.error) parts.push(quote.error);
+        if (quote.conid) parts.push(`conid ${quote.conid}`);
+        if (quote.source) parts.push(`source ${quote.source}`);
+        if (quote.updatedAt) parts.push(`quote ${new Date(quote.updatedAt).toLocaleTimeString()}`);
+        const realtime = quote.conid ? realtimeConidStats.get(String(quote.conid)) : null;
+        if (realtime) {
+            parts.push(`rt messages ${realtime.messages}`);
+            parts.push(`rt ticks ${realtime.ticks || 0}`);
+            if (realtime.price !== null && realtime.price !== undefined) parts.push(`rt price ${formatPrice(realtime.price)}`);
+            if (realtime.fields) parts.push(`fields ${realtime.fields}`);
+        } else if (quote.conid) {
+            parts.push('rt messages 0');
+        }
+        return parts.join(' · ');
+    }
+
+    function updateRealtimeWatchlist(conid, price, percentChange, absoluteChange, updatedMs) {
+        let changed = false;
+        for (const [symbol, quote] of watchlistQuotes.entries()) {
+            if (String(quote.conid || '') !== conid) continue;
+            let nextPercentChange = percentChange !== null ? percentChange : quote.percentChange;
+            if (nextPercentChange === null && price !== null && Number.isFinite(quote.previousClose) && quote.previousClose !== 0) {
+                nextPercentChange = ((price - quote.previousClose) / quote.previousClose) * 100;
+            } else if (nextPercentChange === null && absoluteChange !== null && Number.isFinite(quote.previousClose) && quote.previousClose !== 0) {
+                nextPercentChange = (absoluteChange / quote.previousClose) * 100;
+            }
+            watchlistQuotes.set(symbol, {
+                ...quote,
+                status: 'ready',
+                price: price !== null ? price : quote.price,
+                percentChange: nextPercentChange,
+                source: 'realtime',
+                updatedAt: updatedMs
+            });
+            changed = true;
+        }
+        if (changed) renderWatchlist();
+    }
+
+    function realtimeCandleTime(state, updatedMs) {
+        const updatedSeconds = Math.floor(updatedMs / 1000);
+        const seconds = barSeconds(state.bar);
+        if (seconds < 86400) return Math.floor(updatedSeconds / seconds) * seconds;
+
+        const updatedDate = new Date(updatedSeconds * 1000);
+        const last = state.candles[state.candles.length - 1];
+        if (last) {
+            const lastDate = new Date(last.time * 1000);
+            if (
+                lastDate.getUTCFullYear() === updatedDate.getUTCFullYear() &&
+                lastDate.getUTCMonth() === updatedDate.getUTCMonth() &&
+                lastDate.getUTCDate() === updatedDate.getUTCDate()
+            ) {
+                return last.time;
+            }
+        }
+        if (seconds === 86400 && last) {
+            const lastDate = new Date(last.time * 1000);
+            const alignedDate = new Date(Date.UTC(
+                updatedDate.getUTCFullYear(),
+                updatedDate.getUTCMonth(),
+                updatedDate.getUTCDate(),
+                lastDate.getUTCHours(),
+                lastDate.getUTCMinutes(),
+                lastDate.getUTCSeconds()
+            ));
+            return Math.floor(alignedDate.getTime() / 1000);
+        }
+        return updatedSeconds;
+    }
+
+    function applyRealtimeTickToChart(state, price, payload, updatedMs) {
+        if (!state.candles.length) return;
+        if (state.bar === '1d') {
+            seedRealtimeChartFromLiveHistory(state, updatedMs);
+        }
+        const candleTime = realtimeCandleTime(state, updatedMs);
+        const candles = [...state.candles];
+        const last = candles[candles.length - 1];
+
+        if (candleTime > last.time) {
+            const dailyPatch = barSeconds(state.bar) >= 86400
+                ? realtimeDailyCandlePatch(payload, price)
+                : null;
+            candles.push({
+                time: candleTime,
+                open: dailyPatch ? dailyPatch.open : price,
+                high: dailyPatch ? dailyPatch.high : price,
+                low: dailyPatch ? dailyPatch.low : price,
+                close: dailyPatch ? dailyPatch.close : price,
+                volume: null
+            });
+        } else {
+            const index = candleTime === last.time ? candles.length - 1 : candles.findIndex((bar) => bar.time === candleTime);
+            if (index < 0) return;
+            const candle = candles[index];
+            const dailyPatch = barSeconds(state.bar) >= 86400
+                ? realtimeDailyCandlePatch(payload, price, candle)
+                : null;
+            if (dailyPatch) {
+                candles[index] = {
+                    ...candle,
+                    open: dailyPatch.open,
+                    high: Math.max(candle.high, dailyPatch.high, price),
+                    low: Math.min(candle.low, dailyPatch.low, price),
+                    close: dailyPatch.close
+                };
+            } else {
+                candles[index] = {
+                    ...candle,
+                    high: Math.max(candle.high, price),
+                    low: Math.min(candle.low, price),
+                    close: price
+                };
+            }
+        }
+
+        state.candles = candles;
+        state.series.setData(candleSeriesData(state.candles));
+        state.volumeSeries.setData(volumeSeriesData(state.candles));
+    }
+
+    async function seedRealtimeChartFromLiveHistory(state, updatedMs) {
+        if (barSeconds(state.bar) > 86400 || !state.conid || !state.candles.length) return;
+        const updatedDate = new Date(updatedMs);
+        const seedKey = `${state.id}:${state.conid}:${state.bar}:${updatedDate.toISOString().slice(0, 10)}`;
+        if (realtimeSeededCharts.has(seedKey)) return;
+        realtimeSeededCharts.add(seedKey);
+
+        const previousStatus = state.lastDebugText;
+        try {
+            const url = buildMarketDataUrl(state, {
+                force: true,
+                period: state.bar === '1d' ? '1m' : state.chunkPeriod
+            });
+            updateRequestDebug(state, `Realtime seed: ${url}`);
+            const response = await queuedMarketDataFetch(url);
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || `Realtime seed failed: ${response.status}`);
+            const candles = validCandles(data.bars || []);
+            if (!candles.length) return;
+            state.candles = mergeCandles(state.candles, candles);
+            state.series.setData(candleSeriesData(state.candles));
+            state.volumeSeries.setData(volumeSeriesData(state.candles));
+            updateCachePill(state, data.cache);
+        } catch (error) {
+            console.warn('Realtime seed failed', error);
+        } finally {
+            if (previousStatus) updateRequestDebug(state, previousStatus);
+        }
+    }
+
     function sortedWatchlistSymbols() {
         if (watchlistSort === 'default') return watchlistSymbols;
         const copy = [...watchlistSymbols];
@@ -1029,7 +1627,8 @@ if (file_exists($localConfigPath)) {
                 quote.status === 'error' ? 'error' : '',
                 symbol === focusedWatchlistSymbol ? 'focused' : ''
             ].filter(Boolean).join(' ');
-            const title = quote.error ? ` title="${escapeHtml(quote.error)}"` : '';
+            const titleText = watchlistRowTitle(symbol, quote);
+            const title = titleText ? ` title="${escapeHtml(titleText)}"` : '';
             return `
                 <div class="${rowClass}" data-symbol="${symbol}"${title}>
                     <div class="watchlist-symbol">${escapeHtml(symbol)}</div>
@@ -1081,7 +1680,9 @@ if (file_exists($localConfigPath)) {
         const percentChange = previous.close !== 0 ? ((last.close - previous.close) / previous.close) * 100 : 0;
         return {
             status: 'ready',
+            conid: data.request?.conid ? String(data.request.conid) : null,
             price: last.close,
+            previousClose: previous.close,
             percentChange,
             source: data.cache?.hit ? 'cache' : 'historical',
             updatedAt: Date.now()
@@ -1103,7 +1704,12 @@ if (file_exists($localConfigPath)) {
             while (index < queue.length && token === watchlistRefreshToken) {
                 const symbol = queue[index++];
                 try {
-                    watchlistQuotes.set(symbol, await fetchWatchlistQuote(symbol));
+                    const quote = await fetchWatchlistQuote(symbol);
+                    watchlistQuotes.set(symbol, quote);
+                    ensureRealtime();
+                    if (quote.conid) {
+                        window.setTimeout(() => forceRealtimeResubscribe(quote.conid), 0);
+                    }
                 } catch (error) {
                     console.warn(`Watchlist quote failed for ${symbol}`, error);
                     watchlistQuotes.set(symbol, {
@@ -1160,6 +1766,7 @@ if (file_exists($localConfigPath)) {
         setWatchlistMessage('');
         renderWatchlist();
         saveWorkspace();
+        syncRealtimeSubscriptions();
     }
 
     function setStatus(message, isError = false) {
@@ -1209,7 +1816,7 @@ if (file_exists($localConfigPath)) {
         const maxChunk = chunkPeriodForBar(state.bar);
         const targetSeconds = periodSeconds(state.targetPeriod);
         const maxChunkSeconds = periodSeconds(maxChunk);
-        const minPeriodSeconds = barSeconds(state.bar) * 10;
+        const minPeriodSeconds = barSeconds(state.bar) * 80;
         if (targetSeconds < minPeriodSeconds) return maxChunk;
         return targetSeconds < maxChunkSeconds ? state.targetPeriod : maxChunk;
     }
@@ -1223,9 +1830,10 @@ if (file_exists($localConfigPath)) {
     function buildMarketDataUrl(state, options = {}) {
         const force = Boolean(options.force);
         const startTime = options.startTime || null;
+        const period = options.period || state.chunkPeriod;
         const params = new URLSearchParams({
             bar: state.bar,
-            period: state.chunkPeriod,
+            period,
             exchange: state.exchange,
             outsideRth: state.outsideRth ? 'true' : 'false'
         });
@@ -1397,6 +2005,8 @@ if (file_exists($localConfigPath)) {
             <div class="chart-footer">
                 <div class="chart-footer-actions">
                     <button class="footer-button auto-fit-chart" type="button" title="Auto-fit price scale">Auto-fit</button>
+                    <span class="realtime-pill">RT offline</span>
+                    <span class="backfill-pill">Hist idle</span>
                     <span class="cache-pill">Cache</span>
                 </div>
             </div>
@@ -1482,6 +2092,8 @@ if (file_exists($localConfigPath)) {
             timeRangeSaveTimer: null,
             lastRequestUrl: '',
             lastLoadReason: 'initial',
+            lastVisibleRange: null,
+            lastBackfillDecision: 'idle',
             targetPeriod: state.period,
             chunkPeriod: null,
             conid: state.conid || null,
@@ -1572,6 +2184,9 @@ if (file_exists($localConfigPath)) {
         updatePanelHeader(chartState);
         saveWorkspace();
         loadInitialChunk(chartState);
+        if (chartState.conid) {
+            window.setTimeout(ensureRealtime, 0);
+        }
         return chartState;
     }
 
@@ -1631,6 +2246,22 @@ if (file_exists($localConfigPath)) {
         updateChartSymbol(state, symbol);
     }
 
+    function addChartForWatchlistSymbol(symbol) {
+        const normalizedSymbol = normalizeSymbol(symbol);
+        if (!normalizedSymbol) return;
+        setFocusedWatchlistSymbol(normalizedSymbol);
+        const chartState = createPanel({
+            symbol: normalizedSymbol,
+            bar: defaultNewChartBar,
+            period: defaultNewChartPeriod,
+            secType: 'STK',
+            exchange: 'SMART',
+            outsideRth: false
+        });
+        setFocusedChart(chartState.id);
+        setStatus(`Added ${normalizedSymbol} chart`);
+    }
+
     function updateRequestDebug(state, text = '') {
         state.lastDebugText = text || (state.lastRequestUrl ? `${state.lastLoadReason}: ${state.lastRequestUrl}` : `${state.symbol} · ${state.bar} · chunk ${state.chunkPeriod}`);
     }
@@ -1646,6 +2277,14 @@ if (file_exists($localConfigPath)) {
         } else {
             pill.title = '';
         }
+    }
+
+    function updateBackfillPill(state, text = null, title = null, isLoading = false) {
+        const pill = state.panel.querySelector('.backfill-pill');
+        if (!pill) return;
+        if (text !== null) pill.textContent = text;
+        if (title !== null) pill.title = title;
+        pill.classList.toggle('loading', Boolean(isLoading));
     }
 
     function setPanelMessage(state, message, isError = false, showOverlay = false) {
@@ -1742,6 +2381,14 @@ if (file_exists($localConfigPath)) {
         return true;
     }
 
+    function preserveVisibleRangeAfterPrepend(state, range, shift) {
+        if (!range) return;
+        if (shift <= 0) return;
+        window.requestAnimationFrame(() => {
+            restoreLogicalRangeAfterPrepend(state, range, shift);
+        });
+    }
+
     function unavailableChunkMessage(reason, startTime) {
         return startTime ? `${reason} unavailable for chunk ending before ${startTime}` : `${reason} unavailable`;
     }
@@ -1753,6 +2400,7 @@ if (file_exists($localConfigPath)) {
         const startTime = options.startTime || null;
         const chunkId = options.chunkId || `${reason}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
         const targetTime = options.targetTime || null;
+        const loadGeneration = state.loadGeneration || 0;
         let shouldBackfillSavedRange = false;
         let shouldFinishTimeRangeRestore = true;
 
@@ -1777,6 +2425,10 @@ if (file_exists($localConfigPath)) {
             const response = await queuedMarketDataFetch(state.lastRequestUrl);
             const data = await response.json();
             const elapsedMs = Math.round(performance.now() - startedAt);
+            if (mode === 'replace' && loadGeneration !== state.loadGeneration) {
+                updateRequestDebug(state, `Ignored stale ${reason}: ${state.lastRequestUrl}`);
+                return;
+            }
             if (!response.ok) {
                 if (response.status === 401 && window.showSessionExpired) {
                     window.showSessionExpired();
@@ -1792,6 +2444,8 @@ if (file_exists($localConfigPath)) {
             if (data.request && data.request.conid) {
                 state.conid = String(data.request.conid);
                 saveWorkspace();
+                ensureRealtime();
+                window.setTimeout(() => forceRealtimeResubscribe(state.conid), 0);
             }
 
             const previousCandles = state.candles;
@@ -1808,25 +2462,33 @@ if (file_exists($localConfigPath)) {
                     state.chart.timeScale().fitContent();
                 }
             } else {
-                const restoredLogicalRange = restoreLogicalRangeAfterPrepend(state, previousLogicalRange, logicalShift);
-                if (!restoredLogicalRange || state.isRestoringTimeRange) {
-                    restoreSavedTimeRange(state);
-                }
+                preserveVisibleRangeAfterPrepend(state, previousLogicalRange, logicalShift);
             }
             shouldBackfillSavedRange = needsSavedTimeRangeBackfill(state);
             updateCachePill(state, data.cache);
             setPanelMessage(state, '');
             updateRequestDebug(state, `${state.lastLoadReason}: ${state.lastRequestUrl} · ${elapsedMs}ms · ${candles.length} bars · ${data.cache?.hit ? 'cache hit' : 'IBKR fetch'}`);
+            if (mode === 'prepend') {
+                updateBackfillPill(
+                    state,
+                    'Hist loaded',
+                    `${candles.length} older bars loaded in ${elapsedMs}ms from ${state.lastRequestUrl}`
+                );
+            } else {
+                updateBackfillPill(
+                    state,
+                    'Hist idle',
+                    `${candles.length} bars loaded in ${elapsedMs}ms from ${state.lastRequestUrl}`
+                );
+            }
             setStatus(`${state.symbol} ${state.bar} ${state.chunkPeriod} chunk loaded in ${elapsedMs}ms (${data.cache?.hit ? 'cache' : 'IBKR'})`);
         } catch (error) {
             if (mode !== 'replace') {
                 console.warn(error);
                 const message = unavailableChunkMessage(reason, startTime);
                 updateRequestDebug(state, `${message}: ${state.lastRequestUrl}`);
+                updateBackfillPill(state, 'Hist miss', `${message}: ${state.lastRequestUrl}`);
                 setStatus(`${state.symbol} ${state.bar}: ${message}`);
-                if (state.candles.length) {
-                    restoreSavedTimeRange(state);
-                }
                 shouldBackfillSavedRange = false;
                 shouldFinishTimeRangeRestore = false;
                 return;
@@ -1848,11 +2510,16 @@ if (file_exists($localConfigPath)) {
     }
 
     function loadInitialChunk(state, force = false) {
+        state.loadGeneration = (state.loadGeneration || 0) + 1;
         state.chunkPeriod = requestPeriodForState(state);
         state.candles = [];
         state.oldestRequestedTime = null;
         state.nextOlderChunkEnd = null;
         state.requestedOlderEnds.clear();
+        if (state.pendingOlderLoad !== null) {
+            window.clearTimeout(state.pendingOlderLoad);
+            state.pendingOlderLoad = null;
+        }
         for (const id of Array.from(state.loadingChunks.keys())) {
             removeChunkLoader(state, id);
         }
@@ -1868,7 +2535,7 @@ if (file_exists($localConfigPath)) {
             // Snapping to an epoch-aligned boundary (the previous approach) left a gap
             // between the snap point and the initial chunk's first bar, which caused
             // entire months to never be requested.
-            state.nextOlderChunkEnd = earliestLoaded;
+            state.nextOlderChunkEnd = earliestLoaded - barSeconds(state.bar);
         }
 
         let chunkEnd = state.nextOlderChunkEnd;
@@ -1882,16 +2549,42 @@ if (file_exists($localConfigPath)) {
         const startTime = formatIbkrStartTime(chunkEnd);
         const chunkId = `older-${chunkEnd}`;
         updateRequestDebug(state, `Loading older ${state.chunkPeriod} chunk ending before ${startTime}`);
+        updateBackfillPill(
+            state,
+            'Hist loading',
+            `Loading older ${state.symbol} ${state.bar} chunk ending before ${startTime}`,
+            true
+        );
         setStatus(`Loading older ${state.symbol} ${state.bar} bars…`);
         return loadChunk(state, { reason: 'older chunk', mode: 'prepend', startTime, chunkId, targetTime: chunkEnd });
     }
 
     function handleVisibleRange(state, range) {
-        if (!range || state.isInitialLoading || state.candles.length < 40) return;
-        if (range.from > 25) return;
+        if (!range) return;
+        const from = Number(range.from);
+        const to = Number(range.to);
+        const visibleBars = to - from;
+        const barsBeforeLeftEdge = from;
+        state.lastVisibleRange = { from, to };
+
+        if (state.isInitialLoading || state.candles.length < 1) {
+            updateBackfillPill(
+                state,
+                'Hist wait',
+                `range ${from.toFixed(1)}..${to.toFixed(1)} visible ${visibleBars.toFixed(1)} loaded ${state.candles.length}; initial=${state.isInitialLoading}`
+            );
+            return;
+        }
+
+        const nearLoadedStart = barsBeforeLeftEdge <= Math.max(25, state.candles.length * 0.18);
+        const scaledBeyondLoadedData = visibleBars >= state.candles.length * 0.82;
+        state.lastBackfillDecision = `range ${from.toFixed(1)}..${to.toFixed(1)} visible ${visibleBars.toFixed(1)} loaded ${state.candles.length} near=${nearLoadedStart} scaled=${scaledBeyondLoadedData}`;
+        updateBackfillPill(state, 'Hist idle', state.lastBackfillDecision);
+        if (!nearLoadedStart && !scaledBeyondLoadedData) return;
 
         if (state.pendingOlderLoad !== null) return;
 
+        updateBackfillPill(state, 'Hist queued', state.lastBackfillDecision, true);
         state.pendingOlderLoad = window.setTimeout(() => {
             state.pendingOlderLoad = null;
             if (state.isInitialLoading) return;
@@ -1962,6 +2655,7 @@ if (file_exists($localConfigPath)) {
             if (nextChart) setFocusedChart(nextChart.id);
         }
         focusSoleChart();
+        syncRealtimeSubscriptions();
         saveWorkspace();
         setStatus(charts.size ? 'Chart closed' : 'Ready');
     }
@@ -1983,7 +2677,26 @@ if (file_exists($localConfigPath)) {
 
         const row = event.target.closest('[data-symbol]');
         if (!row) return;
-        loadWatchlistSymbolInFocusedChart(row.getAttribute('data-symbol'));
+        const symbol = row.getAttribute('data-symbol');
+        if (watchlistClickTimer !== null) {
+            window.clearTimeout(watchlistClickTimer);
+        }
+        watchlistClickTimer = window.setTimeout(() => {
+            watchlistClickTimer = null;
+            loadWatchlistSymbolInFocusedChart(symbol);
+        }, 220);
+    });
+    watchlistItemsEl.addEventListener('dblclick', (event) => {
+        const removeButton = event.target.closest('[data-remove-symbol]');
+        if (removeButton) return;
+
+        const row = event.target.closest('[data-symbol]');
+        if (!row) return;
+        if (watchlistClickTimer !== null) {
+            window.clearTimeout(watchlistClickTimer);
+            watchlistClickTimer = null;
+        }
+        addChartForWatchlistSymbol(row.getAttribute('data-symbol'));
     });
     gridRowsInput.addEventListener('change', applyGridDimensions);
     gridColsInput.addEventListener('change', applyGridDimensions);
@@ -2039,6 +2752,7 @@ if (file_exists($localConfigPath)) {
         if (watchlistSymbols.length > 0) {
             refreshWatchlistQuotes();
         }
+        window.setTimeout(ensureRealtime, 0);
     }
 
 </script>
