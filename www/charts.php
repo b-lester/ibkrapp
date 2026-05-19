@@ -458,6 +458,16 @@ if (file_exists($localConfigPath)) {
             text-overflow: ellipsis;
         }
 
+        .chart-contract-name {
+            color: var(--text);
+            font-size: 12px;
+            font-weight: 650;
+            max-width: min(360px, 34vw);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
         .chart-actions {
             display: flex;
             align-items: center;
@@ -632,6 +642,12 @@ if (file_exists($localConfigPath)) {
         .footer-button:hover {
             border-color: #45545e;
             background: #1d262b;
+        }
+
+        .footer-button.active {
+            border-color: #4e8cff;
+            color: #d9e7ff;
+            background: rgba(78, 140, 255, 0.14);
         }
 
         .drag-handle {
@@ -822,6 +838,7 @@ if (file_exists($localConfigPath)) {
     const watchlistQuotes = new Map();
     let watchlistRefreshToken = 0;
     let watchlistClickTimer = null;
+    const contractInfoPromises = new Map();
     let focusedChartId = null;
     let focusedWatchlistSymbol = null;
     let activeMarketDataRequests = 0;
@@ -903,6 +920,8 @@ if (file_exists($localConfigPath)) {
             secType: state.secType,
             exchange: state.exchange,
             outsideRth: state.outsideRth,
+            logScale: Boolean(state.logScale),
+            contractInfo: state.contractInfo || null,
             viewport: {
                 timeRange: state.savedTimeRange || null
             }
@@ -981,6 +1000,15 @@ if (file_exists($localConfigPath)) {
             .replace(/>/g, '&gt;')
             .replace(/"/g, '&quot;')
             .replace(/'/g, '&#039;');
+    }
+
+    function firstNonEmptyString(...values) {
+        for (const value of values) {
+            if (value === null || value === undefined) continue;
+            const text = String(value).trim();
+            if (text) return text;
+        }
+        return '';
     }
 
     function setWatchlistMessage(message = '') {
@@ -1827,6 +1855,89 @@ if (file_exists($localConfigPath)) {
         return `${date.getUTCFullYear()}${pad(date.getUTCMonth() + 1)}${pad(date.getUTCDate())}-${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`;
     }
 
+    function contractInfoFromMarketData(data, state) {
+        const request = data?.request || {};
+        const resolved = request.resolvedContract || {};
+        const metadata = data?.metadata || {};
+        const symbol = firstNonEmptyString(request.symbol, resolved.symbol, metadata.symbol, state.symbol).toUpperCase();
+        const name = firstNonEmptyString(
+            metadata.text,
+            resolved.companyName,
+            resolved.company,
+            resolved.name,
+            resolved.description,
+            resolved.text,
+            resolved.localSymbol
+        );
+
+        return {
+            symbol,
+            name: name && name.toUpperCase() !== symbol ? name : '',
+            conid: firstNonEmptyString(request.conid, resolved.conid, state.conid),
+            exchange: firstNonEmptyString(request.exchange, state.exchange),
+            secType: firstNonEmptyString(request.secType, state.secType)
+        };
+    }
+
+    function contractInfoLookupKey(state) {
+        return [
+            normalizeSymbol(state.symbol),
+            state.conid || '',
+            state.secType || '',
+            state.exchange || ''
+        ].join('|');
+    }
+
+    async function fetchContractInfo(state) {
+        const key = contractInfoLookupKey(state);
+        if (contractInfoPromises.has(key)) return contractInfoPromises.get(key);
+
+        const params = new URLSearchParams({
+            symbol: state.symbol,
+            secType: state.secType || 'STK',
+            exchange: state.exchange || 'SMART'
+        });
+        if (state.conid) params.set('conid', state.conid);
+
+        const promise = fetch(`contract.php?${params.toString()}`)
+            .then(async (response) => {
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || `Contract lookup failed: ${response.status}`);
+                return data.contract || null;
+            })
+            .finally(() => {
+                contractInfoPromises.delete(key);
+            });
+
+        contractInfoPromises.set(key, promise);
+        return promise;
+    }
+
+    function ensureChartContractInfo(state) {
+        if (state.contractInfo?.name || !state.symbol) return;
+        const key = contractInfoLookupKey(state);
+        if (state.contractInfoAttemptedKey === key) return;
+        state.contractInfoAttemptedKey = key;
+        const expectedSymbol = state.symbol;
+        const expectedConid = state.conid || null;
+
+        fetchContractInfo(state)
+            .then((contract) => {
+                if (!contract || !contract.name) return;
+                if (state.symbol !== expectedSymbol) return;
+                if (expectedConid !== null && (state.conid || null) !== expectedConid) return;
+                state.contractInfo = {
+                    ...(state.contractInfo || {}),
+                    ...contract
+                };
+                saveWorkspace();
+                updatePanelHeader(state);
+            })
+            .catch((error) => {
+                console.warn(`Contract lookup failed for ${state.symbol}`, error);
+            });
+    }
+
     function buildMarketDataUrl(state, options = {}) {
         const force = Boolean(options.force);
         const startTime = options.startTime || null;
@@ -1986,6 +2097,7 @@ if (file_exists($localConfigPath)) {
                 <div class="chart-title">
                     <span class="drag-handle" draggable="true" title="Drag to reorder">⠿</span>
                     <input class="chart-symbol-input" autocomplete="off" spellcheck="false" title="Chart symbol">
+                    <span class="chart-contract-name"></span>
                     <span class="chart-meta"></span>
                 </div>
                 <div class="chart-actions">
@@ -2005,6 +2117,7 @@ if (file_exists($localConfigPath)) {
             <div class="chart-footer">
                 <div class="chart-footer-actions">
                     <button class="footer-button auto-fit-chart" type="button" title="Auto-fit price scale">Auto-fit</button>
+                    <button class="footer-button log-scale-chart" type="button" title="Toggle logarithmic price scale">Log</button>
                     <span class="realtime-pill">RT offline</span>
                     <span class="backfill-pill">Hist idle</span>
                     <span class="cache-pill">Cache</span>
@@ -2100,14 +2213,18 @@ if (file_exists($localConfigPath)) {
             secType: state.secType || 'STK',
             exchange: state.exchange || 'SMART',
             outsideRth: Boolean(state.outsideRth),
+            logScale: Boolean(state.logScale),
+            contractInfo: state.contractInfo || null,
             savedTimeRange: sanitizeTimeRange(state.savedTimeRange),
             isRestoringTimeRange: Boolean(sanitizeTimeRange(state.savedTimeRange))
         };
 
+        applyPriceScaleMode(chartState);
         panel.querySelector('.close-chart').addEventListener('click', () => removeChart(chartState.id));
         panel.querySelector('.maximize-chart').addEventListener('click', () => toggleMaximizeChart(chartState));
         panel.querySelector('.refresh-chart').addEventListener('click', () => loadInitialChunk(chartState, false));
         panel.querySelector('.auto-fit-chart').addEventListener('click', () => autoFitChart(chartState));
+        panel.querySelector('.log-scale-chart').addEventListener('click', () => toggleLogScale(chartState));
         panel.addEventListener('pointerdown', () => setFocusedChart(chartState.id));
         panel.querySelector('.chart-symbol-input').addEventListener('focus', (event) => event.target.select());
         panel.querySelector('.chart-symbol-input').addEventListener('click', (event) => event.target.select());
@@ -2195,7 +2312,22 @@ if (file_exists($localConfigPath)) {
         if (symbolInputEl && symbolInputEl.value !== state.symbol) {
             symbolInputEl.value = state.symbol;
         }
-        state.panel.querySelector('.chart-meta').textContent = `${state.bar} candles · ${state.chunkPeriod || requestPeriodForState(state)} chunks · initial ${state.targetPeriod}`;
+        const contractNameEl = state.panel.querySelector('.chart-contract-name');
+        const contractName = firstNonEmptyString(state.contractInfo?.name);
+        if (contractNameEl) {
+            contractNameEl.textContent = contractName;
+            contractNameEl.title = contractName || 'Looking up company name';
+        }
+        const metaParts = [
+            `${state.bar} candles`,
+            `${state.chunkPeriod || requestPeriodForState(state)} chunks`,
+            `initial ${state.targetPeriod}`
+        ];
+        if (state.contractInfo?.exchange) metaParts.push(state.contractInfo.exchange);
+        if (state.contractInfo?.secType) metaParts.push(state.contractInfo.secType);
+        if (state.contractInfo?.conid) metaParts.push(`conid ${state.contractInfo.conid}`);
+        state.panel.querySelector('.chart-meta').textContent = metaParts.join(' · ');
+        if (!contractName) ensureChartContractInfo(state);
         const barSelect = state.panel.querySelector('.chart-bar-select');
         if (barSelect && barSelect.value !== state.bar) {
             barSelect.value = state.bar;
@@ -2217,6 +2349,8 @@ if (file_exists($localConfigPath)) {
         captureTimeRange(state);
         state.symbol = symbol;
         state.conid = null;
+        state.contractInfo = null;
+        state.contractInfoAttemptedKey = null;
         state.isRestoringTimeRange = Boolean(state.savedTimeRange);
         saveWorkspace();
         updatePanelHeader(state);
@@ -2293,11 +2427,38 @@ if (file_exists($localConfigPath)) {
         state.panel.querySelector('.chart-message').textContent = message || '';
     }
 
-    function autoFitChart(state) {
+    function priceScaleMode(logScale) {
+        const modes = LightweightCharts.PriceScaleMode || {};
+        return logScale
+            ? (modes.Logarithmic ?? 1)
+            : (modes.Normal ?? 0);
+    }
+
+    function updateLogScaleButton(state) {
+        const button = state.panel.querySelector('.log-scale-chart');
+        if (!button) return;
+        button.classList.toggle('active', Boolean(state.logScale));
+        button.title = state.logScale ? 'Use linear price scale' : 'Use logarithmic price scale';
+    }
+
+    function applyPriceScaleMode(state) {
         state.chart.priceScale('right').applyOptions({
+            mode: priceScaleMode(state.logScale),
             autoScale: true,
             scaleMargins: { top: 0.08, bottom: 0.26 }
         });
+        updateLogScaleButton(state);
+    }
+
+    function toggleLogScale(state) {
+        state.logScale = !state.logScale;
+        applyPriceScaleMode(state);
+        saveWorkspace();
+        setStatus(`${state.symbol} ${state.logScale ? 'log' : 'linear'} scale`);
+    }
+
+    function autoFitChart(state) {
+        applyPriceScaleMode(state);
         state.chart.priceScale('volume').applyOptions({
             scaleMargins: { top: 0.78, bottom: 0 },
             borderVisible: false
@@ -2453,9 +2614,11 @@ if (file_exists($localConfigPath)) {
 
             if (data.request && data.request.conid) {
                 state.conid = String(data.request.conid);
+                state.contractInfo = contractInfoFromMarketData(data, state);
                 saveWorkspace();
                 ensureRealtime();
                 window.setTimeout(() => forceRealtimeResubscribe(state.conid), 0);
+                updatePanelHeader(state);
             }
 
             const previousCandles = state.candles;
@@ -2746,6 +2909,8 @@ if (file_exists($localConfigPath)) {
                     secType: savedChart.secType || 'STK',
                     exchange: savedChart.exchange || 'SMART',
                     outsideRth: Boolean(savedChart.outsideRth),
+                    logScale: Boolean(savedChart.logScale),
+                    contractInfo: savedChart.contractInfo || null,
                     savedTimeRange: timeRangeFromSavedChart(savedChart)
                 });
             });
