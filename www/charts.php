@@ -566,7 +566,7 @@ if (file_exists($localConfigPath)) {
             min-height: 38px;
             display: flex;
             align-items: center;
-            justify-content: flex-end;
+            justify-content: space-between;
             gap: 8px;
             padding: 5px 9px;
             border-top: 1px solid var(--panel-border);
@@ -578,6 +578,23 @@ if (file_exists($localConfigPath)) {
             display: flex;
             align-items: center;
             gap: 8px;
+        }
+
+        .ohlc-readout {
+            min-width: 0;
+            color: #c9d4d9;
+            font-variant-numeric: tabular-nums;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .ohlc-readout .up {
+            color: #7fd0a3;
+        }
+
+        .ohlc-readout .down {
+            color: #f18b8f;
         }
 
         .cache-pill {
@@ -2005,6 +2022,45 @@ if (file_exists($localConfigPath)) {
             .filter((bar) => Number.isFinite(bar.value) && bar.value >= 0);
     }
 
+    function formatOhlcDate(time) {
+        const seconds = Number(time);
+        if (!Number.isFinite(seconds)) return '';
+        const date = new Date(seconds * 1000);
+        return date.toLocaleString(undefined, {
+            month: 'short',
+            day: 'numeric',
+            hour: 'numeric',
+            minute: '2-digit'
+        });
+    }
+
+    function ohlcReadoutHtml(bar) {
+        if (!bar) return 'O -- H -- L -- C --';
+        const directionClass = bar.close >= bar.open ? 'up' : 'down';
+        const change = bar.close - bar.open;
+        const changePct = bar.open !== 0 ? (change / bar.open) * 100 : 0;
+        const range = bar.high - bar.low;
+        const rangePct = bar.low !== 0 ? (range / bar.low) * 100 : 0;
+        const sign = change > 0 ? '+' : '';
+        const volume = Number(bar.volume);
+        const volumeText = Number.isFinite(volume) ? ` V ${formatPrice(volume)}` : '';
+        return [
+            `<span>${formatOhlcDate(bar.time)}</span>`,
+            `O ${formatPrice(bar.open)}`,
+            `H ${formatPrice(bar.high)}`,
+            `L ${formatPrice(bar.low)}`,
+            `C <span class="${directionClass}">${formatPrice(bar.close)}</span>`,
+            `<span class="${directionClass}">${sign}${formatPrice(change)} / ${sign}${changePct.toFixed(2)}%</span>`,
+            `R ${formatPrice(range)} / ${rangePct.toFixed(2)}%${volumeText}`
+        ].join(' · ');
+    }
+
+    function updateOhlcReadout(state, bar = null) {
+        const readout = state.panel.querySelector('.ohlc-readout');
+        if (!readout) return;
+        readout.innerHTML = ohlcReadoutHtml(bar);
+    }
+
     function sanitizeTimeRange(range) {
         if (!range) return null;
         const from = Number(range.from);
@@ -2115,6 +2171,7 @@ if (file_exists($localConfigPath)) {
                 <div class="chart-message">Loading…</div>
             </div>
             <div class="chart-footer">
+                <div class="ohlc-readout">O -- H -- L -- C --</div>
                 <div class="chart-footer-actions">
                     <button class="footer-button auto-fit-chart" type="button" title="Auto-fit price scale">Auto-fit</button>
                     <button class="footer-button log-scale-chart" type="button" title="Toggle logarithmic price scale">Log</button>
@@ -2246,6 +2303,10 @@ if (file_exists($localConfigPath)) {
             chartState.isRestoringTimeRange = false;
             saveWorkspace();
             loadInitialChunk(chartState, false);
+        });
+        chart.subscribeCrosshairMove((param) => {
+            const data = param?.seriesData?.get(series);
+            updateOhlcReadout(chartState, data || null);
         });
         chart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
             positionChunkLoaders(chartState);
