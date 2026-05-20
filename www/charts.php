@@ -170,6 +170,12 @@ if (file_exists($localConfigPath)) {
             background: #243039;
         }
 
+        .button.active {
+            border-color: #4e8cff;
+            color: #d9e7ff;
+            background: rgba(78, 140, 255, 0.14);
+        }
+
         .button.primary {
             background: var(--accent);
             border-color: var(--accent);
@@ -766,6 +772,7 @@ if (file_exists($localConfigPath)) {
         </div>
         <button id="add-chart-button" class="button primary" type="button">Add Chart</button>
         <button id="toggle-watchlist-button" class="button" type="button">Watchlist</button>
+        <button id="extended-hours-button" class="button" type="button" title="Toggle pre/post-market data">RTH</button>
         <div class="auth-status">
             <div id="auth-dot" class="status-dot"></div>
             <span id="auth-text">Checking session...</span>
@@ -800,6 +807,7 @@ if (file_exists($localConfigPath)) {
     const statusBar = document.getElementById('status-bar');
     const addChartButton = document.getElementById('add-chart-button');
     const toggleWatchlistButton = document.getElementById('toggle-watchlist-button');
+    const extendedHoursButton = document.getElementById('extended-hours-button');
     const symbolInput = document.getElementById('symbol-input');
     const gridRowsInput = document.getElementById('grid-rows-input');
     const gridColsInput = document.getElementById('grid-cols-input');
@@ -850,6 +858,7 @@ if (file_exists($localConfigPath)) {
     let isRestoringWorkspace = false;
     let saveWorkspaceTimer = null;
     let watchlistVisible = true;
+    let includeExtendedHours = false;
     let watchlistSymbols = [];
     let watchlistSort = 'default';
     const watchlistQuotes = new Map();
@@ -928,6 +937,30 @@ if (file_exists($localConfigPath)) {
         if (shouldSave) saveWorkspace();
     }
 
+    function updateExtendedHoursButton() {
+        extendedHoursButton.classList.toggle('active', includeExtendedHours);
+        extendedHoursButton.textContent = includeExtendedHours ? 'EXT' : 'RTH';
+        extendedHoursButton.title = includeExtendedHours
+            ? 'Showing pre/post-market data'
+            : 'Showing regular-hours data only';
+    }
+
+    function setExtendedHours(enabled, shouldReload = true) {
+        includeExtendedHours = Boolean(enabled);
+        updateExtendedHoursButton();
+        for (const state of charts.values()) {
+            state.outsideRth = includeExtendedHours;
+            state.savedTimeRange = null;
+            state.isRestoringTimeRange = false;
+            if (shouldReload) loadInitialChunk(state, false);
+        }
+        if (shouldReload && watchlistSymbols.length > 0) {
+            refreshWatchlistQuotes();
+        }
+        saveWorkspace();
+        setStatus(includeExtendedHours ? 'Showing pre/post-market data' : 'Showing regular-hours data only');
+    }
+
     function serializeChartState(state) {
         return {
             symbol: state.symbol,
@@ -950,6 +983,7 @@ if (file_exists($localConfigPath)) {
         const workspace = {
             rows: clampGridNumber(gridRowsInput.value, 1),
             cols: clampGridNumber(gridColsInput.value, 1),
+            extendedHours: includeExtendedHours,
             charts: Array.from(charts.values()).map(serializeChartState),
             watchlist: {
                 visible: watchlistVisible,
@@ -1082,6 +1116,33 @@ if (file_exists($localConfigPath)) {
         if (value === null || value === undefined || typeof value === 'number') return '';
         const match = String(value).trim().match(/^([A-Z]+)/i);
         return match ? match[1].toUpperCase() : '';
+    }
+
+    function easternTimeParts(timestampMs) {
+        const parts = new Intl.DateTimeFormat('en-US', {
+            timeZone: 'America/New_York',
+            weekday: 'short',
+            hour: '2-digit',
+            minute: '2-digit',
+            hour12: false
+        }).formatToParts(new Date(timestampMs));
+        const part = (type) => parts.find((item) => item.type === type)?.value || '';
+        return {
+            weekday: part('weekday'),
+            hour: Number(part('hour')),
+            minute: Number(part('minute'))
+        };
+    }
+
+    function isRegularTradingTimestamp(timestampMs) {
+        const { weekday, hour, minute } = easternTimeParts(timestampMs);
+        if (['Sat', 'Sun'].includes(weekday)) return false;
+        const minutes = hour * 60 + minute;
+        return minutes >= 570 && minutes < 960;
+    }
+
+    function shouldApplyRealtimeTick(updatedMs) {
+        return includeExtendedHours || isRegularTradingTimestamp(updatedMs);
     }
 
     function setRealtimeStatus(status, detail = '') {
@@ -1385,6 +1446,12 @@ if (file_exists($localConfigPath)) {
         const absoluteChange = parseMarketNumber(payload['82']);
         const updatedMs = Number(payload._updated || Date.now());
         if (!conid) return;
+
+        if (!shouldApplyRealtimeTick(updatedMs)) {
+            realtimeStats.lastError = `Ignored extended-hours tick for ${conid}.`;
+            updateRealtimePills();
+            return;
+        }
 
         updateRealtimeConidStats(conid, payload, price, updatedMs, price !== null);
         updateRealtimeWatchlist(conid, price, percentChange, absoluteChange, updatedMs);
@@ -1700,7 +1767,7 @@ if (file_exists($localConfigPath)) {
             bar: '1d',
             period: '1m',
             exchange: 'SMART',
-            outsideRth: 'false'
+            outsideRth: includeExtendedHours ? 'true' : 'false'
         });
         return `marketdata.php?${params.toString()}`;
     }
@@ -1963,7 +2030,7 @@ if (file_exists($localConfigPath)) {
             bar: state.bar,
             period,
             exchange: state.exchange,
-            outsideRth: state.outsideRth ? 'true' : 'false'
+            outsideRth: includeExtendedHours ? 'true' : 'false'
         });
 
         if (state.conid) {
@@ -2451,7 +2518,7 @@ if (file_exists($localConfigPath)) {
             period: defaultNewChartPeriod,
             secType: 'STK',
             exchange: 'SMART',
-            outsideRth: false
+            outsideRth: includeExtendedHours
         });
         setFocusedChart(chartState.id);
         setStatus(`Added ${normalizedSymbol} chart`);
@@ -2840,7 +2907,7 @@ if (file_exists($localConfigPath)) {
             period: defaultNewChartPeriod,
             secType: 'STK',
             exchange: 'SMART',
-            outsideRth: false
+            outsideRth: includeExtendedHours
         });
     }
 
@@ -2896,6 +2963,7 @@ if (file_exists($localConfigPath)) {
 
     addChartButton.addEventListener('click', addChartFromControls);
     toggleWatchlistButton.addEventListener('click', () => setWatchlistVisible(!watchlistVisible));
+    extendedHoursButton.addEventListener('click', () => setExtendedHours(!includeExtendedHours));
     addWatchlistButton.addEventListener('click', addWatchlistSymbol);
     sortAlphaButton.addEventListener('click', () => setWatchlistSort('alpha'));
     sortChangeButton.addEventListener('click', () => setWatchlistSort('change'));
@@ -2949,6 +3017,8 @@ if (file_exists($localConfigPath)) {
 
         gridRowsInput.value = savedWorkspace?.rows || '1';
         gridColsInput.value = savedWorkspace?.cols || '1';
+        includeExtendedHours = Boolean(savedWorkspace?.extendedHours);
+        updateExtendedHoursButton();
         watchlistSymbols = normalizeWatchlistSymbols(savedWorkspace?.watchlist?.symbols || []);
         watchlistSort = ['alpha-asc', 'alpha-desc', 'change-desc', 'change-asc'].includes(savedWorkspace?.watchlist?.sort)
             ? savedWorkspace.watchlist.sort : 'default';
@@ -2969,7 +3039,7 @@ if (file_exists($localConfigPath)) {
                     period: savedChart.period || '1d',
                     secType: savedChart.secType || 'STK',
                     exchange: savedChart.exchange || 'SMART',
-                    outsideRth: Boolean(savedChart.outsideRth),
+                    outsideRth: includeExtendedHours,
                     logScale: Boolean(savedChart.logScale),
                     contractInfo: savedChart.contractInfo || null,
                     savedTimeRange: timeRangeFromSavedChart(savedChart)
