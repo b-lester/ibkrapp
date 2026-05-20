@@ -758,6 +758,7 @@ if (file_exists($localConfigPath)) {
     <div class="topbar">
         <div class="brand">IBKR Charts</div>
         <a class="nav-link" href="index.php">Positions</a>
+        <a class="nav-link" href="calculator.php">Calculator</a>
         <div class="control-group">
             <label for="symbol-input">Symbol</label>
             <input id="symbol-input" autocomplete="off" spellcheck="false">
@@ -2635,10 +2636,34 @@ if (file_exists($localConfigPath)) {
         setStatus(`${state.symbol} price scale auto-fit`);
     }
 
-    function describeRequest(state, force, reason) {
+    function chartRequestLabel(state) {
         const source = /^\d+$/.test(state.symbol) ? `conid ${state.symbol}` : state.symbol;
+        return `${source} · ${state.bar}`;
+    }
+
+    function formatChunkDate(unixSeconds) {
+        if (!Number.isFinite(unixSeconds)) return '';
+        const date = new Date(unixSeconds * 1000);
+        const options = { month: 'short', day: 'numeric', timeZone: 'UTC' };
+        if (date.getUTCFullYear() !== new Date().getUTCFullYear()) {
+            options.year = 'numeric';
+        }
+        return new Intl.DateTimeFormat('en-US', options).format(date);
+    }
+
+    function chunkRangeLabel(state, targetTime = null) {
+        if (targetTime === null || !Number.isFinite(targetTime)) {
+            return `${chartRequestLabel(state)} · latest ${state.chunkPeriod}`;
+        }
+        const chunkSeconds = chunkSecondsForPeriod(state.chunkPeriod);
+        const start = targetTime - chunkSeconds;
+        const end = targetTime;
+        return `${chartRequestLabel(state)} · ${formatChunkDate(start)}-${formatChunkDate(end)}`;
+    }
+
+    function describeRequest(state, force, reason) {
         const mode = force ? 'force refresh' : reason;
-        return `${mode}: ${source} · ${state.bar} candles · ${state.chunkPeriod} chunk`;
+        return `${mode}: ${chartRequestLabel(state)} · ${state.chunkPeriod} chunk`;
     }
 
     function addChunkLoader(state, id, label, targetTime = null) {
@@ -2765,7 +2790,7 @@ if (file_exists($localConfigPath)) {
         const loadingText = describeRequest(state, force, reason);
         setPanelMessage(state, loadingText, false, mode === 'replace' && !state.candles.length);
         if (mode !== 'replace') {
-            addChunkLoader(state, chunkId, loadingText, targetTime);
+            addChunkLoader(state, chunkId, chunkRangeLabel(state, targetTime), targetTime);
         }
         updateRequestDebug(state, `Requesting ${state.lastRequestUrl}`);
         setStatus(loadingText);

@@ -425,6 +425,7 @@ if (file_exists($localConfigPath)) {
         <h1>My Positions</h1>
         <div class="top-nav">
             <a href="charts.php">Charts</a>
+            <a href="calculator.php">Calculator</a>
             <div class="auth-status">
                 <div id="auth-dot" class="status-dot"></div>
                 <span id="auth-text">Checking session...</span>
