@@ -1145,6 +1145,12 @@ if (file_exists($localConfigPath)) {
         return includeExtendedHours || isRegularTradingTimestamp(updatedMs);
     }
 
+    function normalizeRealtimeUpdatedMs(value) {
+        const number = Number(value);
+        if (!Number.isFinite(number) || number <= 0) return Date.now();
+        return number < 1000000000000 ? number * 1000 : number;
+    }
+
     function setRealtimeStatus(status, detail = '') {
         realtimeStatus = status;
         realtimeDetail = detail;
@@ -1376,7 +1382,7 @@ if (file_exists($localConfigPath)) {
             }
         });
         realtimeSocket.addEventListener('error', () => {
-            setRealtimeStatus('error', 'websocket connection failed');
+            setRealtimeStatus('error', 'websocket connection failed. Auth is separate from this; open https://localhost:5050 in this browser and accept the gateway certificate.');
         });
         realtimeSocket.addEventListener('close', () => {
             window.clearTimeout(connectTimeout);
@@ -1441,10 +1447,11 @@ if (file_exists($localConfigPath)) {
         realtimeStats.marketMessages++;
         const conid = String(payload.conid || topic.split('+')[1] || '');
         const price = realtimePayloadPrice(payload);
+        const chartPrice = realtimeChartPrice(payload);
         const lastPrice = parseMarketNumber(payload['31']);
         const percentChange = parseMarketNumber(payload['83']);
         const absoluteChange = parseMarketNumber(payload['82']);
-        const updatedMs = Number(payload._updated || Date.now());
+        const updatedMs = normalizeRealtimeUpdatedMs(payload._updated);
         if (!conid) return;
 
         if (!shouldApplyRealtimeTick(updatedMs)) {
@@ -1455,19 +1462,29 @@ if (file_exists($localConfigPath)) {
 
         updateRealtimeConidStats(conid, payload, price, updatedMs, price !== null);
         updateRealtimeWatchlist(conid, price, percentChange, absoluteChange, updatedMs);
+        seedRealtimeChartsForConid(conid, updatedMs);
         if (price !== null) {
             realtimeStats.ticks++;
             realtimeStats.lastTickAt = Date.now();
             realtimeStats.lastError = lastPrice === null ? `Using bid/ask-derived price ${formatPrice(price)} for ${conid}.` : '';
+        } else {
+            realtimeStats.lastError = `Market-data message for ${conid} did not include a usable display price.`;
+        }
+
+        if (chartPrice !== null) {
             for (const state of charts.values()) {
                 if (String(state.conid || '') === conid) {
-                    applyRealtimeTickToChart(state, price, payload, updatedMs);
+                    applyRealtimeTickToChart(state, chartPrice, payload, updatedMs);
                 }
             }
-        } else {
-            realtimeStats.lastError = `Market-data message for ${conid} did not include a usable price.`;
         }
         updateRealtimePills();
+    }
+
+    function realtimeChartPrice(payload) {
+        const lastPrefix = marketNumberPrefix(payload['31']);
+        if (lastPrefix === 'C') return null;
+        return parseMarketNumber(payload['31']);
     }
 
     function realtimePayloadPrice(payload) {
@@ -1483,7 +1500,7 @@ if (file_exists($localConfigPath)) {
                 : ask !== null && ask > 0
                     ? ask
                     : null;
-        if (lastPrefix === 'C' && bookPrice !== null) return bookPrice;
+        if (lastPrefix === 'C') return bookPrice;
         if (last !== null) return last;
         if (currentClose !== null) return currentClose;
         if (bookPrice !== null) return bookPrice;
@@ -1503,7 +1520,7 @@ if (file_exists($localConfigPath)) {
             open: open ?? existingCandle?.open ?? fallbackPrice,
             high: high ?? existingCandle?.high ?? fallbackPrice,
             low: low ?? existingCandle?.low ?? fallbackPrice,
-            close: close ?? existingCandle?.close ?? fallbackPrice
+            close: close ?? fallbackPrice
         };
     }
 
@@ -1596,9 +1613,6 @@ if (file_exists($localConfigPath)) {
 
     function applyRealtimeTickToChart(state, price, payload, updatedMs) {
         if (!state.candles.length) return;
-        if (state.bar === '1d') {
-            seedRealtimeChartFromLiveHistory(state, updatedMs);
-        }
         const candleTime = realtimeCandleTime(state, updatedMs);
         const candles = [...state.candles];
         const last = candles[candles.length - 1];
@@ -1613,7 +1627,9 @@ if (file_exists($localConfigPath)) {
                 high: dailyPatch ? dailyPatch.high : price,
                 low: dailyPatch ? dailyPatch.low : price,
                 close: dailyPatch ? dailyPatch.close : price,
-                volume: null
+                volume: null,
+                _source: 'realtime',
+                _realtimeUpdatedMs: updatedMs
             });
         } else {
             const index = candleTime === last.time ? candles.length - 1 : candles.findIndex((bar) => bar.time === candleTime);
@@ -1623,19 +1639,23 @@ if (file_exists($localConfigPath)) {
                 ? realtimeDailyCandlePatch(payload, price, candle)
                 : null;
             if (dailyPatch) {
+                const highCandidates = [candle.high, dailyPatch.high, price].filter(Number.isFinite);
+                const lowCandidates = [candle.low, dailyPatch.low, price].filter(Number.isFinite);
                 candles[index] = {
                     ...candle,
-                    open: dailyPatch.open,
-                    high: Math.max(candle.high, dailyPatch.high, price),
-                    low: Math.min(candle.low, dailyPatch.low, price),
-                    close: dailyPatch.close
+                    open: candle._source === 'historical' ? candle.open : dailyPatch.open,
+                    high: Math.max(...highCandidates),
+                    low: Math.min(...lowCandidates),
+                    close: dailyPatch.close,
+                    _realtimeUpdatedMs: updatedMs
                 };
             } else {
                 candles[index] = {
                     ...candle,
                     high: Math.max(candle.high, price),
                     low: Math.min(candle.low, price),
-                    close: price
+                    close: price,
+                    _realtimeUpdatedMs: updatedMs
                 };
             }
         }
@@ -1645,12 +1665,24 @@ if (file_exists($localConfigPath)) {
         state.volumeSeries.setData(volumeSeriesData(state.candles));
     }
 
+    function seedRealtimeChartsForConid(conid, updatedMs) {
+        for (const state of charts.values()) {
+            if (String(state.conid || '') === conid && state.bar === '1d') {
+                seedRealtimeChartFromLiveHistory(state, updatedMs);
+            }
+        }
+    }
+
     async function seedRealtimeChartFromLiveHistory(state, updatedMs) {
         if (barSeconds(state.bar) > 86400 || !state.conid || !state.candles.length) return;
         const updatedDate = new Date(updatedMs);
         const seedKey = `${state.id}:${state.conid}:${state.bar}:${updatedDate.toISOString().slice(0, 10)}`;
         if (realtimeSeededCharts.has(seedKey)) return;
         realtimeSeededCharts.add(seedKey);
+        const seedGeneration = state.loadGeneration || 0;
+        const seedBar = state.bar;
+        const seedConid = state.conid;
+        const seedSymbol = state.symbol;
 
         const previousStatus = state.lastDebugText;
         try {
@@ -1662,9 +1694,17 @@ if (file_exists($localConfigPath)) {
             const response = await queuedMarketDataFetch(url);
             const data = await response.json();
             if (!response.ok) throw new Error(data.error || `Realtime seed failed: ${response.status}`);
+            if (
+                seedGeneration !== (state.loadGeneration || 0) ||
+                seedBar !== state.bar ||
+                seedConid !== state.conid ||
+                seedSymbol !== state.symbol
+            ) {
+                return;
+            }
             const candles = validCandles(data.bars || []);
             if (!candles.length) return;
-            state.candles = mergeCandles(state.candles, candles);
+            state.candles = mergeCandles(state.candles, candles, { preserveRealtimeClose: true });
             state.series.setData(candleSeriesData(state.candles));
             state.volumeSeries.setData(volumeSeriesData(state.candles));
             updateCachePill(state, data.cache);
@@ -2055,7 +2095,8 @@ if (file_exists($localConfigPath)) {
             high: Number(bar.high ?? bar.h),
             low: Number(bar.low ?? bar.l),
             close: Number(bar.close ?? bar.c),
-            volume: bar.volume ?? bar.v ?? null
+            volume: bar.volume ?? bar.v ?? null,
+            _source: 'historical'
         };
     }
 
@@ -2637,10 +2678,27 @@ if (file_exists($localConfigPath)) {
         }
     }
 
-    function mergeCandles(existingCandles, incomingCandles) {
+    function mergeCandle(existingCandle, incomingCandle, options = {}) {
+        if (!existingCandle) return incomingCandle;
+        if (!options.preserveRealtimeClose || !existingCandle._realtimeUpdatedMs) {
+            return incomingCandle;
+        }
+        const liveClose = Number(existingCandle.close);
+        const incomingHigh = Number(incomingCandle.high);
+        const incomingLow = Number(incomingCandle.low);
+        return {
+            ...incomingCandle,
+            high: Number.isFinite(liveClose) ? Math.max(incomingHigh, liveClose) : incomingHigh,
+            low: Number.isFinite(liveClose) ? Math.min(incomingLow, liveClose) : incomingLow,
+            close: Number.isFinite(liveClose) ? liveClose : incomingCandle.close,
+            _realtimeUpdatedMs: existingCandle._realtimeUpdatedMs
+        };
+    }
+
+    function mergeCandles(existingCandles, incomingCandles, options = {}) {
         const byTime = new Map();
         for (const candle of existingCandles) byTime.set(candle.time, candle);
-        for (const candle of incomingCandles) byTime.set(candle.time, candle);
+        for (const candle of incomingCandles) byTime.set(candle.time, mergeCandle(byTime.get(candle.time), candle, options));
         return Array.from(byTime.values()).sort((a, b) => a.time - b.time);
     }
 

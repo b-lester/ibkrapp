@@ -269,6 +269,17 @@ function duration_seconds(string $value): int {
     return $amount * 365 * 24 * 60 * 60;
 }
 
+function effective_cache_ttl_seconds(int $requestedTtl, ?string $startTime, string $bar): int {
+    if ($startTime !== null) return $requestedTtl;
+
+    $barSeconds = duration_seconds($bar);
+    if ($barSeconds > 0 && $barSeconds <= 86400) {
+        return min($requestedTtl, 30);
+    }
+
+    return min($requestedTtl, 300);
+}
+
 function ibkr_start_time_to_ms(?string $startTime): ?int {
     if ($startTime === null) return null;
     $date = DateTimeImmutable::createFromFormat('!Ymd-H:i:s', $startTime, new DateTimeZone('UTC'));
@@ -665,6 +676,7 @@ try {
     $outsideRth = request_bool($input, 'outsideRth', false);
     $force = request_bool($input, 'force', false);
     $cacheTtl = request_int($input, 'cacheTtl', $DEFAULT_CACHE_TTL_SECONDS, 0, $DEFAULT_CACHE_TTL_SECONDS);
+    $effectiveCacheTtl = effective_cache_ttl_seconds($cacheTtl, $startTime, $bar);
     $source = request_string($input, 'source', 'Trades');
     $secType = request_string($input, 'secType', 'STK');
 
@@ -723,7 +735,7 @@ try {
             'source' => $source,
         ]);
 
-        $cached = load_cached_history($db, $cacheKey, $cacheTtl, $period, $bar, $startTime);
+        $cached = load_cached_history($db, $cacheKey, $effectiveCacheTtl, $period, $bar, $startTime);
         if ($cached !== null) {
             echo json_encode(
                 format_history_response($cached['payload'], [
@@ -739,13 +751,14 @@ try {
                     'resolvedContract' => $resolvedContract,
                     'force' => $force,
                     'cacheTtl' => $cacheTtl,
+                    'effectiveCacheTtl' => $effectiveCacheTtl,
                 ], true, $cached['fetched_at'], $cacheKey, true),
                 JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES
             );
             exit;
         }
 
-        $cachedByBars = load_cached_history_by_bars($db, $conid, $secType, $exchange, $period, $bar, $startTime, $outsideRth, $source, $cacheTtl);
+        $cachedByBars = load_cached_history_by_bars($db, $conid, $secType, $exchange, $period, $bar, $startTime, $outsideRth, $source, $effectiveCacheTtl);
         if ($cachedByBars !== null) {
             echo json_encode(
                 format_history_response($cachedByBars['payload'], [
@@ -761,6 +774,7 @@ try {
                     'resolvedContract' => $resolvedContract,
                     'force' => $force,
                     'cacheTtl' => $cacheTtl,
+                    'effectiveCacheTtl' => $effectiveCacheTtl,
                 ], true, $cachedByBars['fetched_at'], $cacheKey, true),
                 JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES
             );
@@ -812,10 +826,11 @@ try {
         'resolvedContract' => $resolvedContract,
         'force' => $force,
         'cacheTtl' => $cacheTtl,
+        'effectiveCacheTtl' => $effectiveCacheTtl,
     ];
 
     if ($db !== null && !$force) {
-        $cached = load_cached_history($db, $cacheKey, $cacheTtl, $period, $bar, $startTime);
+        $cached = load_cached_history($db, $cacheKey, $effectiveCacheTtl, $period, $bar, $startTime);
         if ($cached !== null) {
             echo json_encode(
                 format_history_response($cached['payload'], $requestPayload, true, $cached['fetched_at'], $cacheKey, true),
@@ -824,7 +839,7 @@ try {
             exit;
         }
 
-        $cachedByBars = load_cached_history_by_bars($db, $conid, $secType, $exchange, $period, $bar, $startTime, $outsideRth, $source, $cacheTtl);
+        $cachedByBars = load_cached_history_by_bars($db, $conid, $secType, $exchange, $period, $bar, $startTime, $outsideRth, $source, $effectiveCacheTtl);
         if ($cachedByBars !== null) {
             echo json_encode(
                 format_history_response($cachedByBars['payload'], $requestPayload, true, $cachedByBars['fetched_at'], $cacheKey, true),
