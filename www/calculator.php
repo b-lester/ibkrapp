@@ -197,10 +197,61 @@ if (file_exists($localConfigPath)) {
 
         .slider-label-row .input-label { margin: 0; }
 
-        .period-display {
+        .period-display-wrap {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .period-stepper {
+            display: flex;
+            align-items: center;
+            border: 1px solid var(--panel-border);
+            border-radius: 5px;
+            overflow: hidden;
+        }
+
+        .period-stepper:focus-within { border-color: var(--accent); }
+
+        .stepper-btn {
+            background: var(--input);
+            border: none;
+            color: var(--muted);
+            font-size: 16px;
+            line-height: 1;
+            padding: 0 8px;
+            height: 32px;
+            cursor: pointer;
+            user-select: none;
+            transition: color 0.1s, background 0.1s;
+        }
+
+        .stepper-btn:hover { color: var(--text); background: #1a2228; }
+        .stepper-btn:active { background: #222c33; }
+
+        .period-days-input {
+            width: 52px;
             font-size: 15px;
             font-weight: 700;
             color: var(--text);
+            background: var(--input);
+            border: none;
+            border-left: 1px solid var(--panel-border);
+            border-right: 1px solid var(--panel-border);
+            padding: 3px 6px;
+            text-align: center;
+            outline: none;
+            -moz-appearance: textfield;
+        }
+
+        .period-days-input::-webkit-inner-spin-button,
+        .period-days-input::-webkit-outer-spin-button { -webkit-appearance: none; }
+
+        .period-days-unit {
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--muted);
+            white-space: nowrap;
         }
 
         .period-slider {
@@ -385,7 +436,14 @@ if (file_exists($localConfigPath)) {
         <div class="calc-panel">
             <div class="slider-label-row">
                 <span class="input-label">Time Period</span>
-                <span id="period-display" class="period-display">1 month</span>
+                <div class="period-display-wrap">
+                    <div class="period-stepper">
+                        <button type="button" class="stepper-btn" id="period-decrement">−</button>
+                        <input type="number" id="period-days-input" class="period-days-input" min="1" max="252" value="21">
+                        <button type="button" class="stepper-btn" id="period-increment">+</button>
+                    </div>
+                    <span class="period-days-unit">trading days</span>
+                </div>
             </div>
             <input type="range" id="period-slider" min="1" max="252" value="21" class="period-slider">
             <div class="slider-ticks">
@@ -422,13 +480,15 @@ if (file_exists($localConfigPath)) {
 </div>
 
 <script>
-    const annualRateInput = document.getElementById('annual-rate');
-    const periodSlider    = document.getElementById('period-slider');
-    const periodDisplay   = document.getElementById('period-display');
-    const resultValueEl   = document.getElementById('result-value');
-    const resultContextEl = document.getElementById('result-context');
-    const referenceTbody  = document.getElementById('reference-tbody');
-    const ticks           = document.querySelectorAll('.slider-tick');
+    const annualRateInput  = document.getElementById('annual-rate');
+    const periodSlider     = document.getElementById('period-slider');
+    const periodDaysInput  = document.getElementById('period-days-input');
+    const periodDecrement  = document.getElementById('period-decrement');
+    const periodIncrement  = document.getElementById('period-increment');
+    const resultValueEl    = document.getElementById('result-value');
+    const resultContextEl  = document.getElementById('result-context');
+    const referenceTbody   = document.getElementById('reference-tbody');
+    const ticks            = document.querySelectorAll('.slider-tick');
 
     const TRADING_DAYS_PER_YEAR = 252;
 
@@ -499,7 +559,6 @@ if (file_exists($localConfigPath)) {
         const required = calcRequired(annualPct, days);
         const label    = formatDays(days);
 
-        periodDisplay.textContent = formatDays(days);
         updateSliderFill();
         updateActiveTick(days);
 
@@ -520,19 +579,88 @@ if (file_exists($localConfigPath)) {
         }).join('');
     }
 
+    // slider → days input
+    periodSlider.addEventListener('input', () => {
+        periodDaysInput.value = periodSlider.value;
+        update();
+    });
+
+    // days input → slider
+    periodDaysInput.addEventListener('input', () => {
+        let val = parseInt(periodDaysInput.value, 10);
+        if (!Number.isFinite(val) || val < 1) return;
+        if (val > 252) val = 252;
+        periodSlider.value = val;
+        update();
+    });
+
+    // clamp on blur in case user typed something out of range
+    periodDaysInput.addEventListener('blur', () => {
+        let val = parseInt(periodDaysInput.value, 10);
+        if (!Number.isFinite(val) || val < 1) val = 1;
+        if (val > 252) val = 252;
+        periodDaysInput.value = val;
+        periodSlider.value = val;
+        update();
+    });
+
     // tick clicks
     ticks.forEach((tick) => {
         tick.addEventListener('click', () => {
-            periodSlider.value = tick.dataset.days;
+            const days = Number(tick.dataset.days);
+            periodSlider.value = days;
+            periodDaysInput.value = days;
             update();
         });
     });
 
-    annualRateInput.addEventListener('input', update);
-    periodSlider.addEventListener('input', update);
+    function stepDays(delta) {
+        let val = Math.max(1, Math.min(252, (parseInt(periodDaysInput.value, 10) || 1) + delta));
+        periodDaysInput.value = val;
+        periodSlider.value = val;
+        update();
+    }
+
+    periodDecrement.addEventListener('click', () => stepDays(-1));
+    periodIncrement.addEventListener('click', () => stepDays(+1));
+
+    let savePrefsTimer = null;
+    function savePrefs() {
+        const annualPct = Number(annualRateInput.value);
+        if (!Number.isFinite(annualPct)) return;
+        if (savePrefsTimer !== null) window.clearTimeout(savePrefsTimer);
+        savePrefsTimer = window.setTimeout(async () => {
+            savePrefsTimer = null;
+            try {
+                await fetch('preferences.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ calculatorPrefs: { annualRate: annualPct } })
+                });
+            } catch (error) {
+                console.warn('Failed to save calculator preferences', error);
+            }
+        }, 150);
+    }
+
+    async function loadPrefs() {
+        try {
+            const response = await fetch('preferences.php');
+            if (!response.ok) return;
+            const prefs = await response.json();
+            const rate = prefs?.calculatorPrefs?.annualRate;
+            if (Number.isFinite(rate)) {
+                annualRateInput.value = rate;
+            }
+        } catch (error) {
+            console.warn('Failed to load calculator preferences', error);
+        }
+    }
+
+    annualRateInput.addEventListener('input', () => { update(); savePrefs(); });
 
     // init
-    update();
+    loadPrefs().then(() => update());
 </script>
 <script src="auth_status.js?v=<?= htmlspecialchars($assetVersion, ENT_QUOTES) ?>"></script>
 <script>startAuthStatusPolling();</script>

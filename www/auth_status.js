@@ -1,4 +1,5 @@
 let isReauthenticating = false;
+let isLoggingOut = false;
 
 function authStatusElements() {
     return {
@@ -17,6 +18,29 @@ function setAuthStatus(isAuthenticated, html) {
     } else {
         text.innerText = isAuthenticated ? 'Session Active' : 'Session Expired';
     }
+}
+
+function ensureLogoutButton() {
+    const { text } = authStatusElements();
+    if (!text) return;
+    const container = text.closest('.auth-status');
+    if (!container || container.querySelector('.auth-logout-button')) return;
+
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'auth-logout-button';
+    button.textContent = 'Log out';
+    button.title = 'Log out of the IBKR Client Portal Gateway session';
+    button.addEventListener('click', logoutGatewaySession);
+    Object.assign(button.style, {
+        color: '#8fd2c8',
+        background: 'transparent',
+        border: '0',
+        padding: '0',
+        cursor: 'pointer',
+        font: 'inherit'
+    });
+    container.appendChild(button);
 }
 
 function showSessionExpired() {
@@ -47,6 +71,30 @@ async function manualReauthenticate() {
         text.innerHTML = 'Re-auth failed. (<a href="https://localhost:5050/" target="_blank">Login</a>)';
     } finally {
         isReauthenticating = false;
+    }
+}
+
+async function logoutGatewaySession() {
+    if (isLoggingOut) return;
+    isLoggingOut = true;
+
+    const { text } = authStatusElements();
+    if (text) text.innerText = 'Logging out...';
+
+    try {
+        const response = await fetch('logout_proxy.php', { method: 'POST' });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            throw new Error(data.error || `Logout failed: ${response.status}`);
+        }
+        document.cookie = 'api=; Max-Age=0; path=/; SameSite=Lax';
+        setAuthStatus(false, 'Logged out (<a href="https://localhost:5050/" target="_blank">Login</a>)');
+    } catch (error) {
+        console.error('Logout error:', error);
+        if (text) text.innerHTML = 'Logout failed';
+    } finally {
+        isLoggingOut = false;
+        ensureLogoutButton();
     }
 }
 
@@ -85,11 +133,13 @@ async function tickleSession(isAfterManualReauth = false) {
 }
 
 function startAuthStatusPolling() {
+    ensureLogoutButton();
     tickleSession();
     return window.setInterval(tickleSession, 30000);
 }
 
 window.manualReauthenticate = manualReauthenticate;
+window.logoutGatewaySession = logoutGatewaySession;
 window.tickleSession = tickleSession;
 window.startAuthStatusPolling = startAuthStatusPolling;
 window.setAuthStatus = setAuthStatus;
