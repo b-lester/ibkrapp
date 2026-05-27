@@ -2896,6 +2896,7 @@ if (file_exists($localConfigPath)) {
     function loadInitialChunk(state, force = false) {
         state.loadGeneration = (state.loadGeneration || 0) + 1;
         state.chunkPeriod = requestPeriodForState(state);
+        state.isInitialLoading = false;
         state.candles = [];
         state.oldestRequestedTime = null;
         state.nextOlderChunkEnd = null;
