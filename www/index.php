@@ -210,6 +210,15 @@ if (file_exists($localConfigPath)) {
             background-color: #fff;
             font-size: 0.8rem;
         }
+        .account-view-control {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            margin-right: 10px;
+        }
+        .account-view-control select {
+            min-width: 150px;
+        }
         .preset-save-button {
             margin-left: auto;
             border: 1px solid #0288d1;
@@ -438,6 +447,12 @@ if (file_exists($localConfigPath)) {
     </div>
 
     <div class="sorting-controls">
+        <div class="account-view-control">
+            <label for="account-select">Account:</label>
+            <select id="account-select" onchange="updateAccountView(this.value)">
+                <option value="all">Aggregate</option>
+            </select>
+        </div>
         <div style="display: flex; align-items: center; gap: 5px;">
             <label for="sort-select">Sort:</label>
             <select id="sort-select" onchange="updateSort(this.value)">
@@ -480,6 +495,8 @@ if (file_exists($localConfigPath)) {
     let currentSort = 'ticker';
     let currentFilter = 'all';
     let currentGroupByTicker = true;
+    let currentAccountView = localStorage.getItem('ibkrAccountView') || 'all';
+    let currentAccounts = [];
     let currentPresets = [];
     let lastPositionsData = [];
     let activeLotsContext = null;
@@ -491,9 +508,11 @@ if (file_exists($localConfigPath)) {
     async function fetchPositions() {
         isPositionsLoading = true;
         renderSavePresetButton();
+        renderAccountSelector();
         try {
+            const accountParam = encodeURIComponent(currentAccountView || 'all');
             const [posRes, cashRes, tagsRes, prefsRes, openDatesRes, lotsRes, tradesRes, presetsRes] = await Promise.all([
-                fetch('list_positions.php'),
+                fetch(`list_positions.php?account=${accountParam}`),
                 fetch('list_cash.php'),
                 fetch('tags.php'),
                 fetch('preferences.php'),
@@ -522,6 +541,12 @@ if (file_exists($localConfigPath)) {
             const tradesData = await tradesRes.json();
             const presetsData = await presetsRes.json();
             currentPresets = Array.isArray(presetsData.presets) ? presetsData.presets : [];
+            currentAccounts = Array.isArray(posData.accounts) ? posData.accounts.map(String) : [];
+            if (currentAccountView !== 'all' && !currentAccounts.includes(currentAccountView)) {
+                currentAccountView = 'all';
+                localStorage.setItem('ibkrAccountView', currentAccountView);
+            }
+            renderAccountSelector();
 
             if (prefs.sort) {
                 currentSort = prefs.sort;
@@ -564,7 +589,7 @@ if (file_exists($localConfigPath)) {
             }
 
             lastPositionsData = posData.positions;
-            renderAccountSummary(posData.positions, cashData);
+            renderAccountSummary(posData.positions, cashData, currentAccountView);
             renderStatusMessage();
             renderPresetBar();
             renderSavePresetButton();
@@ -577,11 +602,38 @@ if (file_exists($localConfigPath)) {
                 </div>
             `;
             lastPositionsData = [];
+            currentAccounts = [];
+            renderAccountSelector();
             renderSavePresetButton();
         } finally {
             isPositionsLoading = false;
+            renderAccountSelector();
             renderSavePresetButton();
         }
+    }
+
+    function renderAccountSelector() {
+        const select = document.getElementById('account-select');
+        if (!select) return;
+
+        const accountOptions = currentAccounts
+            .map(accountId => `<option value="${escapeHtml(accountId)}">${escapeHtml(accountId)}</option>`)
+            .join('');
+
+        select.innerHTML = `
+            <option value="all">Aggregate</option>
+            ${accountOptions}
+        `;
+        select.value = currentAccountView;
+        select.disabled = isPositionsLoading;
+    }
+
+    function updateAccountView(accountId) {
+        currentAccountView = accountId || 'all';
+        localStorage.setItem('ibkrAccountView', currentAccountView);
+        document.getElementById('account-container').innerHTML = '<div class="loading">Loading account info...</div>';
+        document.getElementById('table-container').innerHTML = '<div class="loading">Loading positions...</div>';
+        fetchPositions();
     }
 
     function getTicker(pos) {
@@ -789,26 +841,40 @@ if (file_exists($localConfigPath)) {
         return costBasis;
     }
 
-    function renderAccountSummary(positions, cashData) {
-        // Extract account level info from the BASE currency ledger of the first account found
+    function ledgerNumber(ledger, key) {
+        const value = ledger ? Number(ledger[key] || 0) : 0;
+        return Number.isFinite(value) ? value : 0;
+    }
+
+    function getBaseLedger(accountLedger) {
+        if (!accountLedger || typeof accountLedger !== 'object') return null;
+        return accountLedger.BASE || accountLedger.USD || Object.values(accountLedger)[0] || null;
+    }
+
+    function getSummaryLedgers(cashData, selectedAccount) {
+        if (!cashData.accounts || typeof cashData.accounts !== 'object') return [];
+
+        if (selectedAccount && selectedAccount !== 'all') {
+            const ledger = getBaseLedger(cashData.accounts[selectedAccount]);
+            return ledger ? [ledger] : [];
+        }
+
+        return Object.values(cashData.accounts)
+            .map(getBaseLedger)
+            .filter(Boolean);
+    }
+
+    function renderAccountSummary(positions, cashData, selectedAccount) {
         let positionsValue = 0;
         let cashBalance = 0;
         let netLiquidation = 0;
 
-        if (cashData.accounts) {
-            const accountIds = Object.keys(cashData.accounts);
-            if (accountIds.length > 0) {
-                const firstAcc = cashData.accounts[accountIds[0]];
-                const ledger = firstAcc.BASE || firstAcc.USD || Object.values(firstAcc)[0];
-                
-                if (ledger) {
-                    positionsValue = (ledger.stockmarketvalue || 0) + (ledger.stockoptionmarketvalue || 0);
-                    cashBalance = ledger.cashbalance || 0;
-                    netLiquidation = ledger.netliquidationvalue || 0;
-                    currentNLV = netLiquidation;
-                }
-            }
-        }
+        getSummaryLedgers(cashData, selectedAccount).forEach((ledger) => {
+            positionsValue += ledgerNumber(ledger, 'stockmarketvalue') + ledgerNumber(ledger, 'stockoptionmarketvalue');
+            cashBalance += ledgerNumber(ledger, 'cashbalance');
+            netLiquidation += ledgerNumber(ledger, 'netliquidationvalue');
+        });
+        currentNLV = netLiquidation;
 
         let totalExposure = 0;
         let stocksExposure = 0;
