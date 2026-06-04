@@ -878,12 +878,14 @@ if (file_exists($localConfigPath)) {
 
         let totalExposure = 0;
         let stocksExposure = 0;
+        let currentLiabilities = 0;
         if (positions) {
             const tickerGroups = {};
             positions.forEach((pos) => {
                 const ticker = getTicker(pos);
                 if (!tickerGroups[ticker]) tickerGroups[ticker] = [];
                 tickerGroups[ticker].push(pos);
+                currentLiabilities += calculatePositionLiability(pos);
             });
 
             Object.entries(tickerGroups).forEach(([ticker, tickerPositions]) => {
@@ -902,6 +904,7 @@ if (file_exists($localConfigPath)) {
                         <th>Net Liquidation</th>
                         <th>Positions Value</th>
                         <th>Cash Balance</th>
+                        <th>Cash After Liabilities</th>
                         <th>Stocks Exposure</th>
                         <th>Total Exposure</th>
                     </tr>
@@ -911,6 +914,12 @@ if (file_exists($localConfigPath)) {
                         <td><strong>${formatCurrency(netLiquidation)}</strong></td>
                         <td><strong>${formatCurrency(positionsValue)}</strong></td>
                         <td>${formatCurrency(cashBalance)}</td>
+                        <td>
+                            <strong>${formatCurrency(cashBalance - currentLiabilities)}</strong>
+                            <div style="font-size: 0.8rem; color: #666;">
+                                ${formatCurrency(currentLiabilities)} liability
+                            </div>
+                        </td>
                         <td>
                             <strong>${formatCurrency(stocksExposure)}</strong>
                             <div style="font-size: 0.8rem; color: #666;">
