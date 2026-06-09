@@ -233,6 +233,92 @@ function number_value(mixed $value): float {
     return is_numeric($value) ? (float)$value : 0.0;
 }
 
+function market_data_number(mixed $value): ?float {
+    if ($value === null) return null;
+
+    $text = trim((string)$value);
+    if ($text === '') return null;
+
+    $text = str_replace(',', '', $text);
+    if (strlen($text) > 1 && strtoupper($text[0]) === 'C') {
+        $text = substr($text, 1);
+    }
+
+    return is_numeric($text) ? (float)$text : null;
+}
+
+function fetch_marketdata_snapshots(array $conids, string $baseUrl, bool $insecureTls, string $cookieJar): array {
+    $snapshots = [];
+    $conids = array_values(array_unique(array_filter(array_map('strval', $conids), fn($conid) => $conid !== '')));
+    if (count($conids) === 0) return $snapshots;
+
+    foreach (array_chunk($conids, 50) as $chunk) {
+        $query = http_build_query([
+            'conids' => implode(',', $chunk),
+            'fields' => '31,84,86',
+        ]);
+        $url = "{$baseUrl}/iserver/marketdata/snapshot?{$query}";
+
+        $response = curl_json('GET', $url, $insecureTls, $cookieJar);
+        if (is_array($response)) {
+            foreach ($response as $snapshot) {
+                if (!is_array($snapshot) || !isset($snapshot['conid'])) continue;
+                $snapshots[(string)$snapshot['conid']] = $snapshot;
+            }
+        }
+
+        $missingBid = false;
+        foreach ($chunk as $conid) {
+            if (!isset($snapshots[$conid]['84'])) {
+                $missingBid = true;
+                break;
+            }
+        }
+
+        if ($missingBid) {
+            usleep(250000);
+            $response = curl_json('GET', $url, $insecureTls, $cookieJar);
+            if (is_array($response)) {
+                foreach ($response as $snapshot) {
+                    if (!is_array($snapshot) || !isset($snapshot['conid'])) continue;
+                    $snapshots[(string)$snapshot['conid']] = $snapshot;
+                }
+            }
+        }
+    }
+
+    return $snapshots;
+}
+
+function add_option_bid_quotes(array &$positions, string $baseUrl, bool $insecureTls, string $cookieJar): void {
+    $optionConids = [];
+    foreach ($positions as $position) {
+        if (!is_array($position) || ($position['assetClass'] ?? '') !== 'OPT' || empty($position['conid'])) continue;
+        $optionConids[] = (string)$position['conid'];
+    }
+
+    try {
+        $snapshots = fetch_marketdata_snapshots($optionConids, $baseUrl, $insecureTls, $cookieJar);
+    } catch (Throwable $e) {
+        return;
+    }
+
+    if (count($snapshots) === 0) return;
+
+    foreach ($positions as &$position) {
+        if (!is_array($position) || ($position['assetClass'] ?? '') !== 'OPT' || empty($position['conid'])) continue;
+
+        $snapshot = $snapshots[(string)$position['conid']] ?? null;
+        if (!is_array($snapshot)) continue;
+
+        $bid = market_data_number($snapshot['84'] ?? null);
+        if ($bid !== null) {
+            $position['quoteBid'] = $bid;
+        }
+    }
+    unset($position);
+}
+
 function aggregate_positions(array $positions): array {
     $groups = [];
 
@@ -333,6 +419,8 @@ if ($selectedAccount === 'all') {
     $all = fetch_positions_for_account($selectedAccount, $BASE, $INSECURE_TLS, $cookieJar);
     $rawPositions = $all;
 }
+
+add_option_bid_quotes($all, $BASE, $INSECURE_TLS, $cookieJar);
 
 echo json_encode([
     'account' => $selectedAccount,

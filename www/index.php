@@ -1816,6 +1816,9 @@ if (file_exists($localConfigPath)) {
     function renderPositionRow(pos, ticker, showTicker) {
         const costBasis = Math.abs(pos.position * pos.avgCost);
         const daysToExpiry = getDaysToExpiry(pos);
+        const lastDisplayPrice = pos.assetClass === 'OPT' && Number.isFinite(Number(pos.quoteBid))
+            ? Number(pos.quoteBid)
+            : pos.mktPrice;
         const pnlClass = pos.unrealizedPnl >= 0 ? 'pnl-positive' : 'pnl-negative';
         const openDateStr = currentOpenDates[pos.conid];
 
@@ -1887,7 +1890,7 @@ if (file_exists($localConfigPath)) {
                 <td>${targetReturn !== null ? formatPercent(targetReturn) : '-'}</td>
                 <td>${roc !== null ? formatPercent(roc) : '-'}</td>
                 <td>${pos.avgPrice.toFixed(2)}</td>
-                <td>${pos.mktPrice.toFixed(2)}</td>
+                <td>${lastDisplayPrice.toFixed(2)}</td>
                 <td>${formatCurrency(costBasis)}</td>
                 <td>${formatCurrency(pos.mktValue)}</td>
                 <td class="${pnlClass}">
