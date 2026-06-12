@@ -64,6 +64,11 @@ if (file_exists($localConfigPath)) {
             background-color: transparent;
             text-decoration: underline;
         }
+        .refresh-status {
+            color: #666;
+            font-size: 0.75rem;
+            white-space: nowrap;
+        }
         .status-dot {
             width: 8px;
             height: 8px;
@@ -433,6 +438,7 @@ if (file_exists($localConfigPath)) {
     <div class="header-top">
         <h1>My Positions</h1>
         <div class="top-nav">
+            <div id="refresh-countdown" class="refresh-status">Refresh in 1:00</div>
             <a href="charts.php">Charts</a>
             <a href="calculator.php">Calculator</a>
             <div class="auth-status">
@@ -503,10 +509,25 @@ if (file_exists($localConfigPath)) {
     let lotsDraft = [];
     let statusMessageText = '';
     let statusMessageIsError = false;
-    let isPositionsLoading = true;
+    let isPositionsLoading = false;
+    let activePositionsFetch = null;
+    let autoRefreshTimeoutId = null;
+    let refreshCountdownIntervalId = null;
+    let nextAutoRefreshAt = null;
+    const AUTO_REFRESH_INTERVAL_MS = 60000;
 
     async function fetchPositions() {
+        if (activePositionsFetch) {
+            return activePositionsFetch;
+        }
+
+        activePositionsFetch = loadPositions();
+        return activePositionsFetch;
+    }
+
+    async function loadPositions() {
         isPositionsLoading = true;
+        updateRefreshCountdown(true);
         renderSavePresetButton();
         renderAccountSelector();
         try {
@@ -607,9 +628,45 @@ if (file_exists($localConfigPath)) {
             renderSavePresetButton();
         } finally {
             isPositionsLoading = false;
+            activePositionsFetch = null;
             renderAccountSelector();
             renderSavePresetButton();
+            scheduleAutoRefresh();
         }
+    }
+
+    function scheduleAutoRefresh() {
+        clearTimeout(autoRefreshTimeoutId);
+        nextAutoRefreshAt = Date.now() + AUTO_REFRESH_INTERVAL_MS;
+        updateRefreshCountdown();
+
+        autoRefreshTimeoutId = setTimeout(() => {
+            fetchPositions();
+        }, AUTO_REFRESH_INTERVAL_MS);
+
+        if (!refreshCountdownIntervalId) {
+            refreshCountdownIntervalId = setInterval(updateRefreshCountdown, 1000);
+        }
+    }
+
+    function updateRefreshCountdown(isRefreshing = false) {
+        const countdownEl = document.getElementById('refresh-countdown');
+        if (!countdownEl) return;
+
+        if (isRefreshing || isPositionsLoading) {
+            countdownEl.textContent = 'Refreshing...';
+            return;
+        }
+
+        if (!nextAutoRefreshAt) {
+            countdownEl.textContent = 'Refresh in 1:00';
+            return;
+        }
+
+        const remainingSeconds = Math.max(0, Math.ceil((nextAutoRefreshAt - Date.now()) / 1000));
+        const minutes = Math.floor(remainingSeconds / 60);
+        const seconds = String(remainingSeconds % 60).padStart(2, '0');
+        countdownEl.textContent = `Refresh in ${minutes}:${seconds}`;
     }
 
     function renderAccountSelector() {
