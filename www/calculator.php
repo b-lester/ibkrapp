@@ -107,10 +107,16 @@ if (file_exists($localConfigPath)) {
 
         .calc-card {
             width: 100%;
-            max-width: 560px;
+            max-width: 980px;
             display: flex;
             flex-direction: column;
-            gap: 28px;
+            gap: 34px;
+        }
+
+        .tool-section {
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
         }
 
         /* ── card header ── */
@@ -134,6 +140,15 @@ if (file_exists($localConfigPath)) {
             border: 1px solid var(--panel-border);
             border-radius: 10px;
             padding: 20px 22px;
+        }
+
+        .panel-title {
+            margin: 0 0 16px;
+            color: var(--text);
+            font-size: 14px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
         }
 
         /* ── annual rate input ── */
@@ -171,6 +186,149 @@ if (file_exists($localConfigPath)) {
             outline: none;
             -moz-appearance: textfield;
         }
+
+        .comparison-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 16px;
+        }
+
+        .field-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 14px;
+        }
+
+        .field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .field label {
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .field input {
+            width: 100%;
+            color: var(--text);
+            background: var(--input);
+            border: 1px solid var(--panel-border);
+            border-radius: 6px;
+            padding: 8px 10px;
+            font-size: 15px;
+            font-weight: 650;
+            outline: none;
+        }
+
+        .field input:focus { border-color: var(--accent); }
+
+        .field input[type="number"] {
+            text-align: right;
+            -moz-appearance: textfield;
+        }
+
+        .field input[type="number"]::-webkit-inner-spin-button,
+        .field input[type="number"]::-webkit-outer-spin-button {
+            -webkit-appearance: none;
+        }
+
+        .computed-note {
+            margin-top: 14px;
+            color: var(--muted);
+            font-size: 12px;
+            line-height: 1.45;
+        }
+
+        .decision-panel {
+            display: grid;
+            grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.6fr);
+            gap: 18px;
+            align-items: stretch;
+        }
+
+        .decision-callout {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            min-height: 154px;
+            border: 1px solid rgba(47, 143, 131, 0.4);
+            border-radius: 8px;
+            padding: 18px;
+            background: rgba(47, 143, 131, 0.08);
+        }
+
+        .decision-callout.warning {
+            border-color: rgba(201, 77, 87, 0.45);
+            background: rgba(201, 77, 87, 0.08);
+        }
+
+        .decision-kicker {
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 800;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            margin-bottom: 8px;
+        }
+
+        .decision-title {
+            font-size: 26px;
+            font-weight: 850;
+            line-height: 1.08;
+            margin-bottom: 10px;
+        }
+
+        .decision-copy {
+            color: var(--muted);
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        .metric-grid {
+            display: grid;
+            grid-template-columns: repeat(3, minmax(0, 1fr));
+            gap: 10px;
+        }
+
+        .metric {
+            min-height: 74px;
+            border: 1px solid var(--panel-border);
+            border-radius: 8px;
+            padding: 12px;
+            background: rgba(13, 17, 20, 0.45);
+        }
+
+        .metric-label {
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            margin-bottom: 8px;
+        }
+
+        .metric-value {
+            color: var(--text);
+            font-size: 19px;
+            font-weight: 800;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .metric-value.positive { color: var(--accent); }
+        .metric-value.negative { color: var(--danger); }
+
+        .formula-box {
+            color: var(--muted);
+            font-size: 12px;
+            line-height: 1.5;
+        }
+
+        .formula-box strong { color: var(--text); }
 
         .number-input-wrap input[type="number"]::-webkit-inner-spin-button,
         .number-input-wrap input[type="number"]::-webkit-outer-spin-button {
@@ -399,6 +557,12 @@ if (file_exists($localConfigPath)) {
         @media (max-width: 600px) {
             .page-body { padding: 20px 12px 48px; }
             .result-value { font-size: 42px; }
+            .comparison-grid,
+            .field-grid,
+            .decision-panel,
+            .metric-grid {
+                grid-template-columns: 1fr;
+            }
         }
     </style>
 </head>
@@ -416,66 +580,173 @@ if (file_exists($localConfigPath)) {
 
 <div class="page-body">
     <div class="calc-card">
-        <div class="calc-card-header">
-            <h1>Annualized Return</h1>
-            <p>Enter a target annual return and drag the slider to see exactly how much you need to gain in any shorter window to stay on pace — based on <strong>252 trading days per year</strong>, using compound math.</p>
-        </div>
-
-        <!-- input -->
-        <div class="calc-panel">
-            <div class="input-row">
-                <span class="input-label">Target Annual Return</span>
-                <div class="number-input-wrap">
-                    <input type="number" id="annual-rate" value="10" min="-99" max="10000" step="0.1">
-                    <span class="input-suffix">%</span>
-                </div>
+        <section class="tool-section">
+            <div class="calc-card-header">
+                <h1>Annualized Return</h1>
+                <p>Enter a target annual return and drag the slider to see exactly how much you need to gain in any shorter window to stay on pace — based on <strong>252 trading days per year</strong>, using compound math.</p>
             </div>
-        </div>
 
-        <!-- slider -->
-        <div class="calc-panel">
-            <div class="slider-label-row">
-                <span class="input-label">Time Period</span>
-                <div class="period-display-wrap">
-                    <div class="period-stepper">
-                        <button type="button" class="stepper-btn" id="period-decrement">−</button>
-                        <input type="number" id="period-days-input" class="period-days-input" min="1" max="252" value="21">
-                        <button type="button" class="stepper-btn" id="period-increment">+</button>
+            <!-- input -->
+            <div class="calc-panel">
+                <div class="input-row">
+                    <span class="input-label">Target Annual Return</span>
+                    <div class="number-input-wrap">
+                        <input type="number" id="annual-rate" value="10" min="-99" max="10000" step="0.1">
+                        <span class="input-suffix">%</span>
                     </div>
-                    <span class="period-days-unit">trading days</span>
                 </div>
             </div>
-            <input type="range" id="period-slider" min="1" max="252" value="21" class="period-slider">
-            <div class="slider-ticks">
-                <span class="slider-tick" data-days="1">1d</span>
-                <span class="slider-tick" data-days="5">1w</span>
-                <span class="slider-tick" data-days="21">1m</span>
-                <span class="slider-tick" data-days="63">3m</span>
-                <span class="slider-tick" data-days="126">6m</span>
-                <span class="slider-tick" data-days="252">1y</span>
+
+            <!-- slider -->
+            <div class="calc-panel">
+                <div class="slider-label-row">
+                    <span class="input-label">Time Period</span>
+                    <div class="period-display-wrap">
+                        <div class="period-stepper">
+                            <button type="button" class="stepper-btn" id="period-decrement">−</button>
+                            <input type="number" id="period-days-input" class="period-days-input" min="1" max="252" value="21">
+                            <button type="button" class="stepper-btn" id="period-increment">+</button>
+                        </div>
+                        <span class="period-days-unit">trading days</span>
+                    </div>
+                </div>
+                <input type="range" id="period-slider" min="1" max="252" value="21" class="period-slider">
+                <div class="slider-ticks">
+                    <span class="slider-tick" data-days="1">1d</span>
+                    <span class="slider-tick" data-days="5">1w</span>
+                    <span class="slider-tick" data-days="21">1m</span>
+                    <span class="slider-tick" data-days="63">3m</span>
+                    <span class="slider-tick" data-days="126">6m</span>
+                    <span class="slider-tick" data-days="252">1y</span>
+                </div>
             </div>
-        </div>
 
-        <!-- result -->
-        <div class="calc-panel result-box">
-            <div class="result-label">Required return for this period</div>
-            <div id="result-value" class="result-value">—</div>
-            <div id="result-context" class="result-context"></div>
-        </div>
+            <!-- result -->
+            <div class="calc-panel result-box">
+                <div class="result-label">Required return for this period</div>
+                <div id="result-value" class="result-value">—</div>
+                <div id="result-context" class="result-context"></div>
+            </div>
 
-        <!-- reference table -->
-        <div class="calc-panel">
-            <table class="reference-table">
-                <thead>
-                    <tr>
-                        <th>Period</th>
-                        <th class="align-right">Trading Days</th>
-                        <th class="align-right">Required Return</th>
-                    </tr>
-                </thead>
-                <tbody id="reference-tbody"></tbody>
-            </table>
-        </div>
+            <!-- reference table -->
+            <div class="calc-panel">
+                <table class="reference-table">
+                    <thead>
+                        <tr>
+                            <th>Period</th>
+                            <th class="align-right">Trading Days</th>
+                            <th class="align-right">Required Return</th>
+                        </tr>
+                    </thead>
+                    <tbody id="reference-tbody"></tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="tool-section">
+            <div class="calc-card-header">
+                <h1>CSP Capital Switch</h1>
+                <p>Compare the forward return from keeping an existing cash-secured put against closing it and redeploying the collateral into a new CSP. Assumes both options expire out of the money.</p>
+            </div>
+
+            <div class="comparison-grid">
+                <div class="calc-panel">
+                    <h2 class="panel-title">Current CSP</h2>
+                    <div class="field-grid">
+                        <div class="field">
+                            <label for="current-contracts">Contracts</label>
+                            <input type="number" id="current-contracts" value="1" min="1" step="1">
+                        </div>
+                        <div class="field">
+                            <label for="current-strike">Strike</label>
+                            <input type="number" id="current-strike" value="50" min="0" step="0.01">
+                        </div>
+                        <div class="field">
+                            <label for="current-close">Buyback Cost</label>
+                            <input type="number" id="current-close" value="0.20" min="0" step="0.01">
+                        </div>
+                        <div class="field">
+                            <label for="current-dte">DTE</label>
+                            <input type="number" id="current-dte" value="14" min="1" step="1">
+                        </div>
+                        <div class="field">
+                            <label for="current-close-fees">Close Fees</label>
+                            <input type="number" id="current-close-fees" value="1.40" min="0" step="0.01">
+                        </div>
+                    </div>
+                    <div id="current-note" class="computed-note"></div>
+                </div>
+
+                <div class="calc-panel">
+                    <h2 class="panel-title">New CSP</h2>
+                    <div class="field-grid">
+                        <div class="field">
+                            <label for="new-contracts">Contracts</label>
+                            <input type="number" id="new-contracts" value="1" min="1" step="1">
+                        </div>
+                        <div class="field">
+                            <label for="new-strike">Strike</label>
+                            <input type="number" id="new-strike" value="45" min="0" step="0.01">
+                        </div>
+                        <div class="field">
+                            <label for="new-premium">Premium Credit</label>
+                            <input type="number" id="new-premium" value="1.50" min="0" step="0.01">
+                        </div>
+                        <div class="field">
+                            <label for="new-dte">DTE</label>
+                            <input type="number" id="new-dte" value="30" min="1" step="1">
+                        </div>
+                        <div class="field">
+                            <label for="new-open-fees">Open Fees</label>
+                            <input type="number" id="new-open-fees" value="1.00" min="0" step="0.01">
+                        </div>
+                        <div class="field">
+                            <label for="target-roc">Minimum ROC</label>
+                            <input type="number" id="target-roc" value="3" min="-100" step="0.1">
+                        </div>
+                    </div>
+                    <div id="new-note" class="computed-note"></div>
+                </div>
+            </div>
+
+            <div class="calc-panel decision-panel">
+                <div id="switch-callout" class="decision-callout">
+                    <div class="decision-kicker">Decision</div>
+                    <div id="switch-title" class="decision-title">—</div>
+                    <div id="switch-copy" class="decision-copy"></div>
+                </div>
+                <div class="metric-grid">
+                    <div class="metric">
+                        <div class="metric-label">Keep ROC</div>
+                        <div id="keep-roc" class="metric-value">—</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-label">Switch ROC</div>
+                        <div id="switch-roc" class="metric-value">—</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-label">ROC Edge</div>
+                        <div id="roc-edge" class="metric-value">—</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-label">Keep Annualized</div>
+                        <div id="keep-annualized" class="metric-value">—</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-label">Switch Annualized</div>
+                        <div id="switch-annualized" class="metric-value">—</div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-label">Net Extra Profit</div>
+                        <div id="net-extra-profit" class="metric-value">—</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="calc-panel formula-box">
+                <strong>Keep ROC</strong> = current buyback value avoided / current collateral. <strong>Switch ROC</strong> = (new premium - current buyback cost - close/open fees) / new collateral. Annualized values use calendar DTE because option expirations are calendar dated.
+            </div>
+        </section>
     </div>
 </div>
 
@@ -489,8 +760,34 @@ if (file_exists($localConfigPath)) {
     const resultContextEl  = document.getElementById('result-context');
     const referenceTbody   = document.getElementById('reference-tbody');
     const ticks            = document.querySelectorAll('.slider-tick');
+    const cspInputs        = {
+        currentContracts: document.getElementById('current-contracts'),
+        currentStrike:    document.getElementById('current-strike'),
+        currentClose:     document.getElementById('current-close'),
+        currentDte:       document.getElementById('current-dte'),
+        currentCloseFees: document.getElementById('current-close-fees'),
+        newContracts:     document.getElementById('new-contracts'),
+        newStrike:        document.getElementById('new-strike'),
+        newPremium:       document.getElementById('new-premium'),
+        newDte:           document.getElementById('new-dte'),
+        newOpenFees:      document.getElementById('new-open-fees'),
+        targetRoc:        document.getElementById('target-roc'),
+    };
+    const currentNoteEl       = document.getElementById('current-note');
+    const newNoteEl           = document.getElementById('new-note');
+    const switchCalloutEl     = document.getElementById('switch-callout');
+    const switchTitleEl       = document.getElementById('switch-title');
+    const switchCopyEl        = document.getElementById('switch-copy');
+    const keepRocEl           = document.getElementById('keep-roc');
+    const switchRocEl         = document.getElementById('switch-roc');
+    const rocEdgeEl           = document.getElementById('roc-edge');
+    const keepAnnualizedEl    = document.getElementById('keep-annualized');
+    const switchAnnualizedEl  = document.getElementById('switch-annualized');
+    const netExtraProfitEl    = document.getElementById('net-extra-profit');
 
     const TRADING_DAYS_PER_YEAR = 252;
+    const CALENDAR_DAYS_PER_YEAR = 365;
+    const CONTRACT_MULTIPLIER = 100;
 
     const referencePeriods = [
         { label: '1 day',      days: 1   },
@@ -518,6 +815,34 @@ if (file_exists($localConfigPath)) {
         else if (abs < 1)    decimals = 3;
         else                 decimals = 3;
         return (value >= 0 ? '' : '') + value.toFixed(decimals) + '%';
+    }
+
+    function formatSignedPct(value) {
+        return `${value >= 0 ? '+' : ''}${formatPct(value)}`;
+    }
+
+    function formatMoney(value) {
+        const sign = value < 0 ? '-' : '';
+        return `${sign}$${Math.abs(value).toLocaleString(undefined, {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        })}`;
+    }
+
+    function readNumber(input, fallback = 0) {
+        const value = Number(input.value);
+        return Number.isFinite(value) ? value : fallback;
+    }
+
+    function calcAnnualized(simpleReturnPct, days) {
+        if (days <= 0 || simpleReturnPct <= -100) return NaN;
+        return (Math.pow(1 + simpleReturnPct / 100, CALENDAR_DAYS_PER_YEAR / days) - 1) * 100;
+    }
+
+    function setMetric(el, value, formatter) {
+        el.textContent = Number.isFinite(value) ? formatter(value) : '—';
+        el.classList.toggle('positive', Number.isFinite(value) && value > 0);
+        el.classList.toggle('negative', Number.isFinite(value) && value < 0);
     }
 
     function formatDays(days) {
@@ -579,6 +904,64 @@ if (file_exists($localConfigPath)) {
         }).join('');
     }
 
+    function updateCspSwitch() {
+        const currentContracts = Math.max(1, Math.floor(readNumber(cspInputs.currentContracts, 1)));
+        const currentStrike = Math.max(0, readNumber(cspInputs.currentStrike));
+        const currentClose = Math.max(0, readNumber(cspInputs.currentClose));
+        const currentDte = Math.max(1, Math.floor(readNumber(cspInputs.currentDte, 1)));
+        const currentCloseFees = Math.max(0, readNumber(cspInputs.currentCloseFees));
+        const newContracts = Math.max(1, Math.floor(readNumber(cspInputs.newContracts, 1)));
+        const newStrike = Math.max(0, readNumber(cspInputs.newStrike));
+        const newPremium = Math.max(0, readNumber(cspInputs.newPremium));
+        const newDte = Math.max(1, Math.floor(readNumber(cspInputs.newDte, 1)));
+        const newOpenFees = Math.max(0, readNumber(cspInputs.newOpenFees));
+        const targetRoc = readNumber(cspInputs.targetRoc, 3);
+
+        const currentCollateral = currentStrike * CONTRACT_MULTIPLIER * currentContracts;
+        const currentCloseValue = currentClose * CONTRACT_MULTIPLIER * currentContracts;
+        const keepProfit = currentCloseValue;
+        const keepRoc = currentCollateral > 0 ? (keepProfit / currentCollateral) * 100 : NaN;
+        const keepAnnualized = calcAnnualized(keepRoc, currentDte);
+
+        const newCollateral = newStrike * CONTRACT_MULTIPLIER * newContracts;
+        const newPremiumValue = newPremium * CONTRACT_MULTIPLIER * newContracts;
+        const newStandaloneProfit = newPremiumValue - newOpenFees;
+        const newStandaloneRoc = newCollateral > 0 ? (newStandaloneProfit / newCollateral) * 100 : NaN;
+        const switchProfit = newPremiumValue - currentCloseValue - currentCloseFees - newOpenFees;
+        const switchRoc = newCollateral > 0 ? (switchProfit / newCollateral) * 100 : NaN;
+        const switchAnnualized = calcAnnualized(switchRoc, newDte);
+        const annualizedEdge = switchAnnualized - keepAnnualized;
+        const netExtraProfit = switchProfit - keepProfit;
+        const meetsTarget = switchRoc >= targetRoc;
+        const beatsKeep = switchAnnualized > keepAnnualized;
+
+        const standaloneText = Number.isFinite(newStandaloneRoc) ? formatSignedPct(newStandaloneRoc) : '—';
+        currentNoteEl.textContent = `${formatMoney(currentCollateral)} collateral, ${formatMoney(currentCloseValue)} of remaining option value if the current CSP expires OTM.`;
+        newNoteEl.textContent = `${formatMoney(newCollateral)} collateral, ${formatMoney(newPremiumValue)} gross premium, ${standaloneText} standalone ROC before the old close cost.`;
+
+        setMetric(keepRocEl, keepRoc, formatPct);
+        setMetric(switchRocEl, switchRoc, formatPct);
+        setMetric(rocEdgeEl, annualizedEdge, formatSignedPct);
+        setMetric(keepAnnualizedEl, keepAnnualized, formatPct);
+        setMetric(switchAnnualizedEl, switchAnnualized, formatPct);
+        setMetric(netExtraProfitEl, netExtraProfit, formatMoney);
+
+        switchCalloutEl.classList.toggle('warning', !(beatsKeep && meetsTarget));
+        if (!Number.isFinite(switchRoc) || !Number.isFinite(keepRoc)) {
+            switchTitleEl.textContent = 'Enter strikes';
+            switchCopyEl.textContent = 'Both CSPs need valid collateral before the comparison can be calculated.';
+        } else if (beatsKeep && meetsTarget) {
+            switchTitleEl.textContent = 'Switch is favored';
+            switchCopyEl.textContent = `The new CSP beats the current annualized return by ${formatSignedPct(annualizedEdge)} and clears your ${formatPct(targetRoc)} ROC target after closing the current CSP.`;
+        } else if (beatsKeep) {
+            switchTitleEl.textContent = 'Better pace, below target';
+            switchCopyEl.textContent = `The new CSP has the stronger annualized pace, but the net switch ROC is only ${formatPct(switchRoc)} versus your ${formatPct(targetRoc)} target.`;
+        } else {
+            switchTitleEl.textContent = 'Keep is favored';
+            switchCopyEl.textContent = `The current CSP has the better forward annualized return after accounting for the cost to close it.`;
+        }
+    }
+
     // slider → days input
     periodSlider.addEventListener('input', () => {
         periodDaysInput.value = periodSlider.value;
@@ -631,11 +1014,14 @@ if (file_exists($localConfigPath)) {
         if (savePrefsTimer !== null) window.clearTimeout(savePrefsTimer);
         savePrefsTimer = window.setTimeout(async () => {
             savePrefsTimer = null;
+            const cspSwitchPrefs = Object.fromEntries(
+                Object.entries(cspInputs).map(([key, input]) => [key, input.value])
+            );
             try {
                 await fetch('preferences.php', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ calculatorPrefs: { annualRate: annualPct } })
+                    body: JSON.stringify({ calculatorPrefs: { annualRate: annualPct, cspSwitch: cspSwitchPrefs } })
                 });
             } catch (error) {
                 console.warn('Failed to save calculator preferences', error);
@@ -652,15 +1038,26 @@ if (file_exists($localConfigPath)) {
             if (Number.isFinite(rate)) {
                 annualRateInput.value = rate;
             }
+            const cspSwitchPrefs = prefs?.calculatorPrefs?.cspSwitch;
+            if (cspSwitchPrefs && typeof cspSwitchPrefs === 'object') {
+                Object.entries(cspInputs).forEach(([key, input]) => {
+                    if (Object.prototype.hasOwnProperty.call(cspSwitchPrefs, key)) {
+                        input.value = cspSwitchPrefs[key];
+                    }
+                });
+            }
         } catch (error) {
             console.warn('Failed to load calculator preferences', error);
         }
     }
 
     annualRateInput.addEventListener('input', () => { update(); savePrefs(); });
+    Object.values(cspInputs).forEach((input) => {
+        input.addEventListener('input', () => { updateCspSwitch(); savePrefs(); });
+    });
 
     // init
-    loadPrefs().then(() => update());
+    loadPrefs().then(() => { update(); updateCspSwitch(); });
 </script>
 <script src="auth_status.js?v=<?= htmlspecialchars($assetVersion, ENT_QUOTES) ?>"></script>
 <script>startAuthStatusPolling();</script>
