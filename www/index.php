@@ -154,6 +154,27 @@ if (file_exists($localConfigPath)) {
         .pnl-negative {
             color: #e74c3c;
         }
+        tr.pnl-target-met-row td {
+            background-color: #fff8d8;
+        }
+        tr.pnl-target-met-row td.column-hover {
+            background-color: #f7eab5;
+        }
+        tr.pnl-target-met-row td.row-hover {
+            background-color: #fff0a8;
+        }
+        tr.pnl-target-met-row td.column-hover.row-hover {
+            background-color: #efd986;
+        }
+        .pnl-target-met {
+            display: inline-block;
+            margin-top: 2px;
+            padding: 1px 5px;
+            border-radius: 4px;
+            background-color: #f1c40f;
+            color: #4d3f00;
+            font-weight: 700;
+        }
         .loading {
             text-align: center;
             padding: 10px;
@@ -1923,6 +1944,9 @@ if (file_exists($localConfigPath)) {
             pnlPercent = (pos.unrealizedPnl / costBasis) * 100;
         }
 
+        const isAboveTarget = targetReturn !== null && pnlPercent > targetReturn;
+        const targetRowClass = isAboveTarget ? ' class="pnl-target-met-row"' : '';
+        const pnlPercentClass = isAboveTarget ? ' class="pnl-target-met"' : '';
         const isStock = pos.assetClass === 'STK';
         const conidJs = JSON.stringify(String(pos.conid));
         const tickerJs = JSON.stringify(String(ticker));
@@ -1933,7 +1957,7 @@ if (file_exists($localConfigPath)) {
         const lotsHint = isStock ? getLotsHint(pos.conid) : '';
 
         return `
-            <tr>
+            <tr${targetRowClass}>
                 <td>
                     ${showTicker ? `<strong class="ticker-name" onclick="editTag('${ticker}')">${ticker}</strong>` : ''}
                     ${showTicker && currentTags[ticker] ? `<span class="tag-badge">${currentTags[ticker]}</span>` : ''}
@@ -1952,7 +1976,7 @@ if (file_exists($localConfigPath)) {
                 <td>${formatCurrency(pos.mktValue)}</td>
                 <td class="${pnlClass}">
                     <div>${formatCurrency(pos.unrealizedPnl)}</div>
-                    <div style="font-size: 0.75rem;">${formatPercent(pnlPercent)}</div>
+                    <div${pnlPercentClass} style="font-size: 0.75rem;">${formatPercent(pnlPercent)}</div>
                 </td>
                 <td>${liability > 0 ? formatCurrency(liability) : '-'}</td>
             </tr>
