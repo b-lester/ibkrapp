@@ -154,18 +154,6 @@ if (file_exists($localConfigPath)) {
         .pnl-negative {
             color: #e74c3c;
         }
-        tr.pnl-target-met-row td {
-            background-color: #fff8d8;
-        }
-        tr.pnl-target-met-row td.column-hover {
-            background-color: #f7eab5;
-        }
-        tr.pnl-target-met-row td.row-hover {
-            background-color: #fff0a8;
-        }
-        tr.pnl-target-met-row td.column-hover.row-hover {
-            background-color: #efd986;
-        }
         .pnl-target-met {
             display: inline-block;
             margin-top: 2px;
@@ -1945,7 +1933,6 @@ if (file_exists($localConfigPath)) {
         }
 
         const isAboveTarget = targetReturn !== null && pnlPercent > targetReturn;
-        const targetRowClass = isAboveTarget ? ' class="pnl-target-met-row"' : '';
         const pnlPercentClass = isAboveTarget ? ' class="pnl-target-met"' : '';
         const isStock = pos.assetClass === 'STK';
         const conidJs = JSON.stringify(String(pos.conid));
@@ -1957,7 +1944,7 @@ if (file_exists($localConfigPath)) {
         const lotsHint = isStock ? getLotsHint(pos.conid) : '';
 
         return `
-            <tr${targetRowClass}>
+            <tr>
                 <td>
                     ${showTicker ? `<strong class="ticker-name" onclick="editTag('${ticker}')">${ticker}</strong>` : ''}
                     ${showTicker && currentTags[ticker] ? `<span class="tag-badge">${currentTags[ticker]}</span>` : ''}
