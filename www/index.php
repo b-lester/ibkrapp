@@ -1901,6 +1901,8 @@ if (file_exists($localConfigPath)) {
 
         let liability = calculatePositionLiability(pos);
         let strikeBasis = 0;
+        let optionStrike = null;
+        let optionType = null;
         let roc = null;
         let posSubInfo = '';
         if (pos.assetClass === 'OPT') {
@@ -1909,12 +1911,14 @@ if (file_exists($localConfigPath)) {
             if (parts.length >= 4) {
                 const strike = parts[parts.length - 2];
                 const type = parts[parts.length - 1];
+                optionType = type;
                 const expiryCode = getOptionExpiryCode(pos);
                 const expiryDisplay = expiryCode ? formatCompactExpiryCode(expiryCode) : parts[parts.length - 3];
                 posSubInfo = `<div style="font-size: 0.7rem; color: #888; margin-top: 2px;">${strike}${type} ${expiryDisplay}</div>`;
 
                 const strikeVal = parseFloat(strike);
                 if (!isNaN(strikeVal)) {
+                    optionStrike = strikeVal;
                     strikeBasis = Math.abs(pos.position * strikeVal * 100);
 
                     // Calculate ROC: (Premium Collected / Capital at Risk)
@@ -1926,7 +1930,10 @@ if (file_exists($localConfigPath)) {
         }
 
         let pnlPercent = 0;
-        if (pos.assetClass === 'OPT' && strikeBasis > 0) {
+        const usesBidBasedShortOptionPnl = pos.assetClass === 'OPT' && pos.position < 0 && optionStrike > 0;
+        if (usesBidBasedShortOptionPnl) {
+            pnlPercent = ((Math.abs(Number(pos.avgPrice)) - lastDisplayPrice) / optionStrike) * 100;
+        } else if (pos.assetClass === 'OPT' && strikeBasis > 0) {
             pnlPercent = (pos.unrealizedPnl / strikeBasis) * 100;
         } else if (costBasis !== 0) {
             pnlPercent = (pos.unrealizedPnl / costBasis) * 100;
