@@ -1882,9 +1882,6 @@ if (file_exists($localConfigPath)) {
     function renderPositionRow(pos, ticker, showTicker) {
         const costBasis = Math.abs(pos.position * pos.avgCost);
         const daysToExpiry = getDaysToExpiry(pos);
-        const lastDisplayPrice = pos.assetClass === 'OPT' && Number.isFinite(Number(pos.quoteBid))
-            ? Number(pos.quoteBid)
-            : pos.mktPrice;
         const pnlClass = pos.unrealizedPnl >= 0 ? 'pnl-positive' : 'pnl-negative';
         const openDateStr = currentOpenDates[pos.conid];
 
@@ -1929,9 +1926,16 @@ if (file_exists($localConfigPath)) {
             }
         }
 
+        const isShortOption = pos.assetClass === 'OPT' && Number(pos.position) < 0;
+        const lastDisplayPrice = isShortOption && Number.isFinite(Number(pos.quoteAsk))
+            ? Number(pos.quoteAsk)
+            : pos.assetClass === 'OPT' && Number.isFinite(Number(pos.quoteBid))
+                ? Number(pos.quoteBid)
+                : pos.mktPrice;
+
         let pnlPercent = 0;
-        const usesBidBasedShortOptionPnl = pos.assetClass === 'OPT' && pos.position < 0 && optionStrike > 0;
-        if (usesBidBasedShortOptionPnl) {
+        const usesQuoteBasedShortOptionPnl = isShortOption && optionStrike > 0;
+        if (usesQuoteBasedShortOptionPnl) {
             pnlPercent = ((Math.abs(Number(pos.avgPrice)) - lastDisplayPrice) / optionStrike) * 100;
         } else if (pos.assetClass === 'OPT' && strikeBasis > 0) {
             pnlPercent = (pos.unrealizedPnl / strikeBasis) * 100;

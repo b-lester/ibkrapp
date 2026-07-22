@@ -290,7 +290,7 @@ function fetch_marketdata_snapshots(array $conids, string $baseUrl, bool $insecu
     return $snapshots;
 }
 
-function add_option_bid_quotes(array &$positions, string $baseUrl, bool $insecureTls, string $cookieJar): void {
+function add_option_quotes(array &$positions, string $baseUrl, bool $insecureTls, string $cookieJar): void {
     $optionConids = [];
     foreach ($positions as $position) {
         if (!is_array($position) || ($position['assetClass'] ?? '') !== 'OPT' || empty($position['conid'])) continue;
@@ -314,6 +314,11 @@ function add_option_bid_quotes(array &$positions, string $baseUrl, bool $insecur
         $bid = market_data_number($snapshot['84'] ?? null);
         if ($bid !== null) {
             $position['quoteBid'] = $bid;
+        }
+
+        $ask = market_data_number($snapshot['86'] ?? null);
+        if ($ask !== null) {
+            $position['quoteAsk'] = $ask;
         }
     }
     unset($position);
@@ -420,7 +425,7 @@ if ($selectedAccount === 'all') {
     $rawPositions = $all;
 }
 
-add_option_bid_quotes($all, $BASE, $INSECURE_TLS, $cookieJar);
+add_option_quotes($all, $BASE, $INSECURE_TLS, $cookieJar);
 
 echo json_encode([
     'account' => $selectedAccount,
