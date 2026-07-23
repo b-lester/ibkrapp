@@ -763,13 +763,17 @@ if (file_exists($localConfigPath)) {
         return !currentGroupByTicker && currentFilter === 'OPT' && currentSort === 'expires';
     }
 
-    function renderExpirationSummaryRow(expiryCode, totalPnL, totalCollectedPremium, totalLiability) {
+    function renderExpirationSummaryRow(expiryCode, totalPnL, shortPutPnL, shortCallPnL, totalCollectedPremium, totalLiability) {
         const pnlClass = totalPnL >= 0 ? 'pnl-positive' : 'pnl-negative';
+        const shortPutPnlClass = shortPutPnL >= 0 ? 'pnl-positive' : 'pnl-negative';
+        const shortCallPnlClass = shortCallPnL >= 0 ? 'pnl-positive' : 'pnl-negative';
         return `
             <tr class="summary-row">
                 <td colspan="11" class="summary-cell">
                     <div class="summary-content">
                         <div>Expiration Premium (${formatExpiryCode(expiryCode)}): <span class="${pnlClass}">${formatCurrency(totalPnL)}</span></div>
+                        <div>Short Puts: <span class="${shortPutPnlClass}">${formatCurrency(shortPutPnL)}</span></div>
+                        <div>Short Calls: <span class="${shortCallPnlClass}">${formatCurrency(shortCallPnL)}</span></div>
                         <div>Collected: <span class="pos-value">${formatCurrency(totalCollectedPremium)}</span></div>
                         <div>Liability: <span class="pos-value">${formatCurrency(totalLiability)}</span></div>
                     </div>
@@ -778,13 +782,17 @@ if (file_exists($localConfigPath)) {
         `;
     }
 
-    function renderExpirationCumulativeSummaryRow(totalPnL, totalCollectedPremium, totalLiability) {
+    function renderExpirationCumulativeSummaryRow(totalPnL, shortPutPnL, shortCallPnL, totalCollectedPremium, totalLiability) {
         const pnlClass = totalPnL >= 0 ? 'pnl-positive' : 'pnl-negative';
+        const shortPutPnlClass = shortPutPnL >= 0 ? 'pnl-positive' : 'pnl-negative';
+        const shortCallPnlClass = shortCallPnL >= 0 ? 'pnl-positive' : 'pnl-negative';
         return `
             <tr class="summary-row">
                 <td colspan="11" class="summary-cell">
                     <div class="summary-content">
                         <div><strong>Cumulative Premium:</strong> <span class="${pnlClass}">${formatCurrency(totalPnL)}</span></div>
+                        <div>Short Puts: <span class="${shortPutPnlClass}">${formatCurrency(shortPutPnL)}</span></div>
+                        <div>Short Calls: <span class="${shortCallPnlClass}">${formatCurrency(shortCallPnL)}</span></div>
                         <div>Collected: <span class="pos-value">${formatCurrency(totalCollectedPremium)}</span></div>
                         <div>Liability: <span class="pos-value">${formatCurrency(totalLiability)}</span></div>
                     </div>
@@ -830,6 +838,22 @@ if (file_exists($localConfigPath)) {
             type,
             expiryText: parts[parts.length - 3]
         };
+    }
+
+    function getShortOptionPnLByType(pos) {
+        const totals = { put: 0, call: 0 };
+        if (pos.assetClass !== 'OPT' || Number(pos.position) >= 0) return totals;
+
+        const option = getOptionContractDetails(pos);
+        if (!option) return totals;
+
+        if (option.type === 'P') {
+            totals.put = pos.unrealizedPnl;
+        } else if (option.type === 'C') {
+            totals.call = pos.unrealizedPnl;
+        }
+
+        return totals;
     }
 
     function calculatePositionExposure(pos) {
@@ -1754,6 +1778,8 @@ if (file_exists($localConfigPath)) {
 
             const showExpirationPremiumSums = shouldShowExpirationPremiumSums();
             let cumulativeExpiryPnL = 0;
+            let cumulativeShortPutPnL = 0;
+            let cumulativeShortCallPnL = 0;
             let cumulativeExpiryCollectedPremium = 0;
             let cumulativeExpiryLiability = 0;
 
@@ -1761,6 +1787,8 @@ if (file_exists($localConfigPath)) {
                 if (tagIndex > 0) html += '<tr class="tag-spacer"><td colspan="11"></td></tr>';
                 let currentExpiryCode = null;
                 let currentExpiryPnL = 0;
+                let currentShortPutPnL = 0;
+                let currentShortCallPnL = 0;
                 let currentExpiryCollectedPremium = 0;
                 let currentExpiryLiability = 0;
 
@@ -1770,6 +1798,8 @@ if (file_exists($localConfigPath)) {
                         html += renderExpirationSummaryRow(
                             currentExpiryCode,
                             currentExpiryPnL,
+                            currentShortPutPnL,
+                            currentShortCallPnL,
                             currentExpiryCollectedPremium,
                             currentExpiryLiability
                         );
@@ -1777,6 +1807,8 @@ if (file_exists($localConfigPath)) {
                         cumulativeExpiryCollectedPremium += currentExpiryCollectedPremium;
                         cumulativeExpiryLiability += currentExpiryLiability;
                         currentExpiryPnL = 0;
+                        currentShortPutPnL = 0;
+                        currentShortCallPnL = 0;
                         currentExpiryCollectedPremium = 0;
                         currentExpiryLiability = 0;
                     }
@@ -1784,8 +1816,13 @@ if (file_exists($localConfigPath)) {
                     html += renderPositionRow(pos, getTicker(pos), true);
 
                     if (showExpirationPremiumSums) {
+                        const shortOptionPnL = getShortOptionPnLByType(pos);
                         currentExpiryCode = expiryCode;
                         currentExpiryPnL += pos.unrealizedPnl;
+                        currentShortPutPnL += shortOptionPnL.put;
+                        currentShortCallPnL += shortOptionPnL.call;
+                        cumulativeShortPutPnL += shortOptionPnL.put;
+                        cumulativeShortCallPnL += shortOptionPnL.call;
                         currentExpiryCollectedPremium += calculateCollectedPremium(pos);
                         currentExpiryLiability += calculatePositionLiability(pos);
                     }
@@ -1795,6 +1832,8 @@ if (file_exists($localConfigPath)) {
                     html += renderExpirationSummaryRow(
                         currentExpiryCode,
                         currentExpiryPnL,
+                        currentShortPutPnL,
+                        currentShortCallPnL,
                         currentExpiryCollectedPremium,
                         currentExpiryLiability
                     );
@@ -1807,6 +1846,8 @@ if (file_exists($localConfigPath)) {
             if (showExpirationPremiumSums) {
                 html += renderExpirationCumulativeSummaryRow(
                     cumulativeExpiryPnL,
+                    cumulativeShortPutPnL,
+                    cumulativeShortCallPnL,
                     cumulativeExpiryCollectedPremium,
                     cumulativeExpiryLiability
                 );
